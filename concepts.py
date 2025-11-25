@@ -10,8 +10,8 @@ import scipy as sp
 def vertical_shear(year, month):
 
     # replace with appropriate paths
-    ds_mv = xr.open_dataset(f'ccff88fc8593567cc9526554996e22f1/vomecrty_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
-    ds_zv = xr.open_dataset(f'ccff88fc8593567cc9526554996e22f1/vozocrtx_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
+    ds_mv = xr.open_dataset(f'vomecrty_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
+    ds_zv = xr.open_dataset(f'vozocrtx_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
     ds_mxl = xr.open_dataset(f'somxl010_control_monthly_highres_2D_{year}{month}_CONS_v0.1.nc')
 
     # get data
@@ -60,10 +60,6 @@ def vertical_shear(year, month):
     # vertical shear
     shear_vertical_sq = np.abs(shear_meridional)**2 + np.abs(shear_zonal)**2
 
-    # print('Shear zonal:', shear_zonal[~np.isnan(shear_zonal)])
-    # print('Shear meridional:', shear_meridional[~np.isnan(shear_meridional)])
-    # print('Vertical shear at MLD base:', shear_vertical_sq[~np.isnan(shear_vertical_sq)])
-
     # probably add more info abt the year and month?
     shear_sq_da = xr.DataArray(
         shear_vertical_sq[np.newaxis, :, :],
@@ -81,7 +77,7 @@ def vertical_shear(year, month):
 def heat_flux(year, month):
     # lat = y (1021), lon = x (1442)
     # replace with appropriate paths
-    ds_pt = xr.open_dataset(f'1cc5e45462fd3c1d5b5d312cb61a4708/votemper_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
+    ds_pt = xr.open_dataset(f'votemper_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
     ds_mxl = xr.open_dataset(f'somxl010_control_monthly_highres_2D_{year}{month}_CONS_v0.1.nc')
 
     # get data
@@ -121,10 +117,11 @@ def heat_flux(year, month):
     heat_flux_da = xr.DataArray(
         heat_entrainment,  
         coords={
+            'time_counter': ds_mxl['time_counter'].values,
             'nav_lat': (('y', 'x'), ds_mxl['nav_lat'].values),
             'nav_lon': (('y', 'x'), ds_mxl['nav_lon'].values),
         },
-        dims=['y', 'x'],
+        dims=['time_counter', 'y', 'x'],
         name='heat_flux_entrainment' 
     )
 
@@ -137,9 +134,9 @@ def rho(sal, temp, d, lat):
 def brunt_vaisala(year, month):
     # lat = y (1021), lon = x (1442)
     # replace with appropriate paths
-    ds_pt = xr.open_dataset('1cc5e45462fd3c1d5b5d312cb61a4708/votemper_control_monthly_highres_3D_197901_CONS_v0.1.nc')
-    ds_sal = xr.open_dataset('1cc5e45462fd3c1d5b5d312cb61a4708/vosaline_control_monthly_highres_3D_197901_CONS_v0.1.nc')
-    ds_mxl = xr.open_dataset('somxl010_control_monthly_highres_2D_197901_CONS_v0.1.nc')
+    ds_pt = xr.open_dataset(f'votemper_control_monthly_highres_3D_{year}{month}1_CONS_v0.1.nc')
+    ds_sal = xr.open_dataset(f'vosaline_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
+    ds_mxl = xr.open_dataset(f'somxl010_control_monthly_highres_2D_{year}{month}_CONS_v0.1.nc')
     # get data
     mld = ds_mxl['somxl010'].values[0, :, :]  # [lat, lon]
     depths = ds_pt['deptht'].values  # [depth]
@@ -189,10 +186,11 @@ def brunt_vaisala(year, month):
     bv_da = xr.DataArray(
         bv,  
         coords={
+            'time_counter': ds_mxl['time_counter'].values,
             'nav_lat': (('y', 'x'), ds_mxl['nav_lat'].values),
             'nav_lon': (('y', 'x'), ds_mxl['nav_lon'].values),
         },
-        dims=['y', 'x'],
+        dims=['time_counter', 'y', 'x'],
         name='brunt-vaisala_frequency' 
     )
 
@@ -200,8 +198,8 @@ def brunt_vaisala(year, month):
     
 def richardson_number(year, month):
     # load brunt-vaisala frequency and vertical shear at mld base
-    bv = xr.open_dataset('vobvfreq_197901.nc')['brunt-vaisala_frequency'].squeeze()
-    s2 = xr.open_dataset('vograds2_197901.nc')['vertical_shear_squared'].squeeze()
+    bv = xr.open_dataset(f'vobvfreq_{year}{month}.nc')['brunt-vaisala_frequency'].squeeze()
+    s2 = xr.open_dataset(f'vograds2_{year}{month}.nc')['vertical_shear_squared'].squeeze()
     
     # Set minimum shear threshold to avoid division by near-zero values
     s2_min = 1e-8
@@ -212,18 +210,19 @@ def richardson_number(year, month):
     ri_da = xr.DataArray(
         ri,  
         coords={
+            'time_counter': bv['time_counter'].values,
             'nav_lat': (('y', 'x'), bv['nav_lat'].values),
             'nav_lon': (('y', 'x'), bv['nav_lon'].values),
         },
-        dims=['y', 'x'],
+        dims=['time_counter', 'y', 'x'],
         name='richardson_number' 
     )
     ri_da.to_netcdf(f'vorino_{year}{month}.nc')
 
 def wind_stress_curl(year, month):
     # lat = y (1021), lon = x (1442)
-    ds_m = xr.open_dataset('sometauy_control_monthly_highres_2D_197901_CONS_v0.1.nc')
-    ds_z = xr.open_dataset('sozotaux_control_monthly_highres_2D_197901_CONS_v0.1.nc')
+    ds_m = xr.open_dataset(f'sometauy_control_monthly_highres_2D_{year}{month}_CONS_v0.1.nc')
+    ds_z = xr.open_dataset(f'sozotaux_control_monthly_highres_2D_{year}{month}_CONS_v0.1.nc')
     mesh = xr.open_dataset('mesh/mesh_mask.nc')
     zws = ds_z['sozotaux'].values[0, :, :]  # [depth, lat, lon]
     mws = ds_m['sometauy'].values[0, :, :] # [depth, lat, lon]
@@ -246,20 +245,21 @@ def wind_stress_curl(year, month):
     wsc_da = xr.DataArray(
         wsc,  
         coords={
+            'time_counter': ds_m['time_counter'].values,
             'nav_lat': (('y', 'x'), ds_m['nav_lat'].values),
             'nav_lon': (('y', 'x'), ds_m['nav_lon'].values),
         },
-        dims=['y', 'x'],
+        dims=['time_counter', 'y', 'x'],
         name='wind_stress_curl' 
     )
 
     wsc_da.to_netcdf(f'sowsc_{year}{month}_smooth.nc') 
 
 def ekman_pumping(year, month):
-    ds_pt = xr.open_dataset('1cc5e45462fd3c1d5b5d312cb61a4708/votemper_control_monthly_highres_3D_197901_CONS_v0.1.nc')
-    ds_sal = xr.open_dataset('1cc5e45462fd3c1d5b5d312cb61a4708/vosaline_control_monthly_highres_3D_197901_CONS_v0.1.nc')
-    ds_mxl = xr.open_dataset('somxl010_control_monthly_highres_2D_197901_CONS_v0.1.nc')
-    ds_wsc = xr.open_dataset('sowsc_197901.nc')
+    ds_pt = xr.open_dataset(f'votemper_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
+    ds_sal = xr.open_dataset(f'vosaline_control_monthly_highres_3D_{year}{month}_CONS_v0.1.nc')
+    ds_mxl = xr.open_dataset(f'somxl010_control_monthly_highres_2D_{year}{month}_CONS_v0.1.nc')
+    ds_wsc = xr.open_dataset(f'sowsc_{year}{month}.nc')
     mesh = xr.open_dataset('mesh/mesh_mask.nc')
     
     # data
@@ -292,10 +292,11 @@ def ekman_pumping(year, month):
     ep_da = xr.DataArray(
         ekman,  
         coords={
+            'time_counter': ds_mxl['time_counter'].values,
             'nav_lat': (('y', 'x'), ds_mxl['nav_lat'].values),
             'nav_lon': (('y', 'x'), ds_mxl['nav_lon'].values),
         },
-        dims=['y', 'x'],
+        dims=['time_counter', 'y', 'x'],
         name='ekman_pumping' 
     )
     ep_da.to_netcdf(f'voep_{year}{month}.nc')
