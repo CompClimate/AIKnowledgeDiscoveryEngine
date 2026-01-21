@@ -4,19 +4,20 @@ from dateutil.relativedelta import relativedelta
 import xarray as xr
 import numpy as np
 import torch
+from utils.get_config import try_cast, parse_section, config
 
 class EmulatorDataset(Dataset):
     def __init__(self):
-        self.features = ['iicethic', 'iicevelu', 'sohefldo']
-        self.concepts = ['voep', 'von2']
-        self.labels = ['sowsc']
+        self.features = try_cast(config['DATASET']['features'])
+        self.concepts = try_cast(config['DATASET']['concepts'])
+        self.labels = try_cast(config['DATASET']['labels'])
         self.opas = ['opa0', 'opa1', 'opa2', 'opa3', 'opa4']
-        self.window = 6
-        self.offset = [1, 3, 6]
-        self.start = '197901'
-        self.end = '198501'
-        self.file_details = {'iicethic': {'type': 'icemod', 'where': ''}, 'iicevelu': {'type': 'icemod', 'where': ''}, 'iicevelv': {'type': 'icemod', 'where': ''}, 'ileadfra': {'type': 'icemod', 'where': ''}, 'so20chgt': {'type': 'grid', 'where': '_T'}, 'sohefldo': {'type': 'grid', 'where': '_T'}, 'sohtc300': {'type': 'grid', 'where': '_T'}, 'sohtc700': {'type': 'grid', 'where': '_T'}, 'sohtcbtm': {'type': 'grid', 'where': '_T'}, 'sometauy': {'type': 'grid', 'where': '_V'}, 'somxl010': {'type': 'grid', 'where': '_T'}, 'sosaline': {'type': 'grid', 'where': '_T'}, 'sossheig': {'type': 'grid', 'where': '_T'}, 'sosstsst': {'type': 'grid', 'where': '_T'}, 'sowaflup': {'type': 'grid', 'where': '_T'}, 'sozotaux': {'type': 'grid', 'where': '_U'}, 'vomecrty': {'type': 'grid', 'where': '_V'}, 'vosaline': {'type': 'grid', 'where': '_T'}, 'votemper': {'type': 'grid', 'where': '_T'}, 'vozocrtx': {'type': 'grid', 'where': '_U'}}
-        self.concept_details = {'von2': 'T', 'voep': 'F', 'sowsc': 'F'}
+        self.window = config.getint('DATASET', 'context_window')
+        self.offset = try_cast(config['DATASET']['offset'])
+        self.start = config['DATASET']['start']
+        self.end = config['DATASET']['end']
+        self.file_details = try_cast(config['DATASET.FILEDETAILS']['inputs'])
+        self.concept_details = try_cast(config['DATASET.FILEDETAILS']['concepts'])
 
         self.dates = self.date_range()
         self.lazy_data = {}
@@ -43,7 +44,6 @@ class EmulatorDataset(Dataset):
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
             self.lazy_labels[label] = ds
-    
 
     def __len__(self):
         return len(self.date_range()) - self.window - max(self.offset) + 1
@@ -52,7 +52,6 @@ class EmulatorDataset(Dataset):
         data = self.get_input_window(idx)
         label = self.get_label(idx)
         concept = self.get_concepts(idx)
-
         return data, concept, label
     
     def date_range(self):
@@ -82,7 +81,7 @@ class EmulatorDataset(Dataset):
             concept_slice = self.lazy_concepts[concept].isel(time=concept_idx).to_array(dim='variable')
             c_vars.append(concept_slice)
         c_vals = xr.concat(c_vars, dim='variable')
-        c_vals = c_vals.transpose("time", "y", "x", "variable")
+        c_vals = c_vals.transpose("variable", "time", "y", "x")
         return torch.from_numpy(c_vals.values).float()
     
     def get_label(self, idx):
@@ -92,5 +91,5 @@ class EmulatorDataset(Dataset):
             ds = self.lazy_labels[label].isel(time=label_idx).to_array(dim='variable')
             l_vars.append(ds)
         l_vals = xr.concat(l_vars, dim="variable")
-        l_vals = l_vals.transpose("time", "y", "x", "variable")
+        l_vals = l_vals.transpose("variable", "time", "y", "x")
         return torch.from_numpy(l_vals.values).float()

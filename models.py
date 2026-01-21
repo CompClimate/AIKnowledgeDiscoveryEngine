@@ -34,7 +34,7 @@ class PointwiseCBM(nn.Module):
         concepts = concepts.view(B, Y, X, self.output_dim, self.n_concepts)
         output = output.view(B, Y, X, self.output_dim, -1)
 
-        concepts = concepts.permute(0, 3, 1, 2, 4)  # (B, lead, Y, X, n_concepts)
-        output = output.permute(0, 3, 1, 2, 4)      # (B, lead, Y, X, output_dim)
+        concepts = concepts.permute(0, 4, 3, 1, 2)  # (B, n_concepts, lead, Y, X)
+        output = output.permute(0, 4, 3, 1, 2)      # (B, output_dim, lead, Y, X)
         
         return output, concepts
