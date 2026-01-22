@@ -39,15 +39,12 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
         model.train(True)
         train_loss_accum = None
         n_snaps = 0
-        print(len(train_loader))
         for batch, concept_y, y in train_loader:
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
             
             pred, concept_pred = model(batch)
-            print(pred.shape)
-            print(mask.shape)
             pred = pred*mask
             concept_pred = concept_pred*mask
 
@@ -85,9 +82,9 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 # Step the scheduler every epoch (for schedulers like StepLR)
                 scheduler.step()
         output = config['OUTPUT']['dir']
-        #if epoch % 5 == 0:
-        print(f"epoch: {epoch}; loss: {loss_mean:.5f}; val_loss: {val_loss_mean:.5f}")
-        print(f"learning rate: {optimizer.param_groups[0]['lr']}")
+        if epoch % 5 == 0:
+            print(f"epoch: {epoch}; loss: {loss_mean:.5f}; val_loss: {val_loss_mean:.5f}")
+            print(f"learning rate: {optimizer.param_groups[0]['lr']}")
         losses.append(loss_mean.item())
         val_losses.append(val_loss_mean.item())
         if epoch % config.getint('OUTPUT', 'n_epochs_between_checkpoints') == 0:
