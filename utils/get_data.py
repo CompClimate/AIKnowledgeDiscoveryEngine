@@ -11,8 +11,10 @@ def get_dataset():
     dataset = EmulatorDataset()
 
     n = len(dataset)
-    train_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n)
-    val_end = train_end + int(config.getfloat('MODEL.HYPERPARAMETERS', 'test_frac') * n)
+    print(n)
+    members = len(dataset.opas)
+    train_end = round(int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n)/members)*members
+    val_end = train_end + round(int(config.getfloat('MODEL.HYPERPARAMETERS', 'test_frac') * n)/members)*members
 
     train_idx = list(range(0, train_end))
     val_idx = list(range(train_end, val_end))
