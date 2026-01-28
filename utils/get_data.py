@@ -11,7 +11,6 @@ def get_dataset():
     dataset = EmulatorDataset()
 
     n = len(dataset)
-    print(n)
     members = len(dataset.opas)
     train_end = round(int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n)/members)*members
     val_end = train_end + round(int(config.getfloat('MODEL.HYPERPARAMETERS', 'test_frac') * n)/members)*members
@@ -29,15 +28,15 @@ def get_dataset():
     concept_norm = Normalize(len(try_cast(config['DATASET']['concepts'])))
     output_norm = Normalize(len(try_cast(config['DATASET']['labels'])))    
     for batch, concept_y, y in stats_loader:    
-        B, C, T, Y, X = batch.shape
-        for c in range(C):               
-            input_norm.update(c, batch)           
-        B, F, T, Y, X = concept_y.shape
-        for f in range(F):
-            concept_norm.update(f, concept_y)
-        B, F, T, Y, X= y.shape
-        for f in range(F):
-            output_norm.update(f, y)
+        B, F, T, Y, X = batch.shape
+        for f in range(F):               
+            input_norm.update(f, batch)           
+        B, C, T, Y, X = concept_y.shape
+        for c in range(C):
+            concept_norm.update(c, concept_y)
+        B, O, T, Y, X= y.shape
+        for o in range(O):
+            output_norm.update(o, y)
     input_norm.finalize()
     concept_norm.finalize()
     output_norm.finalize()

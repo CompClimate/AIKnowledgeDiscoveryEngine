@@ -18,11 +18,12 @@ class EmulatorDataset(Dataset):
         self.end = config['DATASET']['end']
         self.file_details = try_cast(config['DATASET.FILEDETAILS']['inputs'])
         self.concept_details = try_cast(config['DATASET.FILEDETAILS']['concepts'])
+        self.target_details = try_cast(config['DATASET.FILEDETAILS']['target'])
 
         self.dates = self.date_range()
         self.lazy_data = {}
-        datasets = []
         for feat in self.features:
+            datasets = []
             for opa in self.opas:
                 details = self.file_details[feat]
                 files = [f"/quobyte/maikesgrp/kkringel/oras5/ORCA025/{feat}/{opa}/{feat}_ORAS5_1m_{date}_{details['type']}{details['where']}_02.nc" for date in self.dates]
@@ -30,14 +31,15 @@ class EmulatorDataset(Dataset):
                 ds = ds.rename({'time_counter': 'time'})
                 ds = ds.expand_dims(member=[opa])
                 ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
+                #print('ds ', ds)
                 datasets.append(ds)
             datasets = [ds.chunk({"time": ds['time'].size}) for ds in datasets] #use zarr in place of rechunking??
             ds = xr.concat(datasets, dim='member')
             self.lazy_data[feat] = ds
 
         self.lazy_concepts = {}
-        concepts = []
         for concept in self.concepts:
+            concepts = []
             for opa in self.opas:
                 files = [f"/quobyte/maikesgrp/sanah/concepts/{concept}/{opa}/{concept}_{date}_{self.concept_details[concept]}.nc" for date in self.dates]
                 ds = xr.open_mfdataset(files, combine='by_coords') 
@@ -50,10 +52,10 @@ class EmulatorDataset(Dataset):
             self.lazy_concepts[concept] = ds
 
         self.lazy_labels = {}
-        labels = []
         for label in self.labels:
+            labels = []
             for opa in self.opas:
-                files = [f"/quobyte/maikesgrp/sanah/concepts/{label}/{opa}/{label}_{date}_{self.concept_details[label]}.nc" for date in self.dates]
+                files = [f"/quobyte/maikesgrp/sanah/target/{label}/{opa}/{label}_{date}_{self.target_details[label]}.nc" for date in self.dates]
                 ds = xr.open_mfdataset(files, combine='by_coords') 
                 ds = ds.rename({'time_counter': 'time'})
                 ds = ds.expand_dims(member=[opa])
@@ -68,9 +70,10 @@ class EmulatorDataset(Dataset):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)
     
     def __getitem__(self, idx):
-        member = idx // len(self.opas)  #train/val/test split coulddd split over a timestep at different ensemble member
-        time = idx % len(self.opas)
+        member = idx % len(self.opas)  #train/val/test split coulddd split over a timestep at different ensemble member
+        time = idx // len(self.opas)
         data = self.get_input_window(member, time)
+        #print('in load_data', data.shape)
         label = self.get_label(member, time)
         concept = self.get_concepts(member, time)
         return data, concept, label
@@ -90,7 +93,9 @@ class EmulatorDataset(Dataset):
     def get_input_window(self, member, time):
         X_vars = []
         for feat in self.features:
+            #print(self.lazy_data[feat])
             var_slice = self.lazy_data[feat].isel(time=slice(time, time+self.window), member=member).to_array(dim='variable')
+            #print('get_input ', var_slice.shape)
             X_vars.append(var_slice.values)
         X_vals = np.concatenate(X_vars, axis=0)
         return torch.from_numpy(X_vals).float()

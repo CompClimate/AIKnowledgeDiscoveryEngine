@@ -3,6 +3,7 @@ from utils.get_config import config
 
 def visualize(train_losses, val_losses, plot_test):
     #plot_test = config['VISUALIZATION']['plot_test']
+    output = config['OUTPUT']['dir']
     if plot_test:
         n_panels = 2 #4
     else:
@@ -17,4 +18,4 @@ def visualize(train_losses, val_losses, plot_test):
                        f"val: {val_losses[-1]:0.2e}",
                        xy=(0.2, .75),
                        xycoords='axes fraction')
-    fig.savefig('/home/kkringel/emulator/AIKnowledgeDiscoveryEngine/temp_output/temp.png', dpi=400)
+    fig.savefig(f'{output}/viz.png', dpi=400)
