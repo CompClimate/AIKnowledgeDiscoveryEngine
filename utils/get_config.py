@@ -20,11 +20,11 @@ def try_cast(value):
             continue
     return value
 
-def parse_section(config, section):
+def parse_section(section):
     """Parses a section of the config and attempts to cast values to appropriate types."""
     return {k: try_cast(v) for k, v in config[section].items()}
 
-def get_model(config):
+def get_model():
     print(config.sections())
     model_type = config['MODEL']['type']
     model_module = config['MODEL']['definition']
