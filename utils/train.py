@@ -16,10 +16,7 @@ mask = mesh['tmaskutil'].isel(t=0).values  # [y, x]
 mask = torch.tensor(mask, dtype=torch.float32)[None, None, :, :, None]
 mask = mask.permute(0, 1, 4, 2, 3) 
 
-# Set up environment variables for distributed training
-RANK = int(os.environ["SLURM_PROCID"])      # Global rank of the current process
-LOCAL_RANK = RANK % config.getint('TRAINING', 'ranks_per_node')                       # Local rank within the current node
-DEVICE = f"cuda:{LOCAL_RANK}"               # Assign GPU based on local rank\
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     # Training loop
