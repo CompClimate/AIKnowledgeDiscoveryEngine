@@ -24,7 +24,8 @@ def parse_section(config, section):
     """Parses a section of the config and attempts to cast values to appropriate types."""
     return {k: try_cast(v) for k, v in config[section].items()}
 
-def get_model():
+def get_model(config):
+    print(config.sections())
     model_type = config['MODEL']['type']
     model_module = config['MODEL']['definition']
     module = importlib.import_module(model_module)

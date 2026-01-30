@@ -11,7 +11,7 @@ class EmulatorDataset(Dataset):
         self.features = try_cast(config['DATASET']['features'])
         self.concepts = try_cast(config['DATASET']['concepts'])
         self.labels = try_cast(config['DATASET']['labels'])
-        self.opas = ['opa0', 'opa1', 'opa2', 'opa3', 'opa4']
+        self.opas = try_cast(config['DATASET']['members'])
         self.window = config.getint('DATASET', 'context_window')
         self.offset = try_cast(config['DATASET']['offset'])
         self.start = config['DATASET']['start']
@@ -19,39 +19,55 @@ class EmulatorDataset(Dataset):
         self.file_details = try_cast(config['DATASET.FILEDETAILS']['inputs'])
         self.concept_details = try_cast(config['DATASET.FILEDETAILS']['concepts'])
 
-        self.dates = self.date_range()
+        print('init')
         self.lazy_data = {}
         for feat in self.features:
-            details = self.file_details[feat]
-            files = [f"/quobyte/maikesgrp/kkringel/oras5/ORCA025/{feat}/opa0/{feat}_ORAS5_1m_{date}_{details['type']}{details['where']}_02.nc" for date in self.dates]
-            ds = xr.open_mfdataset(files, combine='by_coords') 
+            data = []
+            for opa in self.opas:
+                dp = xr.open_zarr(f"/quobyte/maikesgrp/sanah/na_crop/{opa}/{feat}_na.zarr")
+                dp = dp.expand_dims(opa=[opa])
+                data.append(dp)
+            ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
             self.lazy_data[feat] = ds
         
+        print('got input')
         self.lazy_concepts = {}
         for concept in self.concepts:
-            files = [f"/quobyte/maikesgrp/sanah/concepts/{concept}/opa0/{concept}_{date}_{self.concept_details[concept]}.nc" for date in self.dates]
-            ds = xr.open_mfdataset(files, combine='by_coords') 
+            data = []
+            for opa in self.opas:
+                dp = xr.open_zarr(f"/quobyte/maikesgrp/sanah/na_crop/{opa}/{concept}_na.zarr")
+                dp = dp.expand_dims(opa=[opa])
+                data.append(dp)
+            ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
             self.lazy_concepts[concept] = ds
 
+        print('got concepts')
         self.lazy_labels = {}
         for label in self.labels:
-            files = [f"/quobyte/maikesgrp/sanah/concepts/{label}/opa0/{label}_{date}_{self.concept_details[label]}.nc" for date in self.dates]
-            ds = xr.open_mfdataset(files, combine='by_coords') 
+            data = []
+            for opa in self.opas:
+                dp = xr.open_zarr(f"/quobyte/maikesgrp/sanah/na_crop/{opa}/{label}_na.zarr")
+                dp = dp.expand_dims(opa=[opa])
+                data.append(dp)
+            ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
             self.lazy_labels[label] = ds
+        print('got label')
 
     def __len__(self):
         return len(self.date_range()) - self.window - max(self.offset) + 1
     
     def __getitem__(self, idx):
-        data = self.get_input_window(idx)
-        label = self.get_label(idx)
-        concept = self.get_concepts(idx)
+        member = idx % len(self.opas)
+        time = idx // len(self.opas)
+        data = self.get_input_window(member, time)
+        label = self.get_label(member, time)
+        concept = self.get_concepts(member, time)
         return data, concept, label
     
     def date_range(self):
@@ -66,29 +82,34 @@ class EmulatorDataset(Dataset):
         return date_list
     
     # using .values makes this not lazy TODO Fix
-    def get_input_window(self, idx):
+    def get_input_window(self, member, time):
         X_vars = []
         for feat in self.features:
-            var_slice = self.lazy_data[feat].isel(time=slice(idx, idx+self.window)).to_array(dim='variable')
+            var_slice = self.lazy_data[feat].isel(time=slice(time, time+self.window), opa=member).to_array(dim='variable')
+            var_slice = var_slice.sel(y=slice(0, 239),x=slice(0, 411))
             X_vars.append(var_slice.values)
         X_vals = np.concat(X_vars)
         return torch.from_numpy(X_vals).float()
 
-    def get_concepts(self, idx):
+    def get_concepts(self, member, time):
         c_vars = []
-        concept_idx = [idx+self.window-1+lead for lead in self.offset]
+        concept_idx = [time+self.window-1+lead for lead in self.offset]
+        print(self.lazy_concepts)
         for concept in self.concepts:
-            concept_slice = self.lazy_concepts[concept].isel(time=concept_idx).to_array(dim='variable')
+            print(concept)
+            concept_slice = self.lazy_concepts[concept].isel(time=concept_idx, opa=member).to_array(dim='variable')
+            concept_slice = concept_slice.sel(y=slice(0, 239), x=slice(0,411))
             c_vars.append(concept_slice)
         c_vals = xr.concat(c_vars, dim='variable')
         c_vals = c_vals.transpose("variable", "time", "y", "x")
         return torch.from_numpy(c_vals.values).float()
     
-    def get_label(self, idx):
+    def get_label(self, member, time):
         l_vars = []
-        label_idx = [idx+self.window-1+lead for lead in self.offset]
+        label_idx = [time+self.window-1+lead for lead in self.offset]
         for label in self.labels:
-            ds = self.lazy_labels[label].isel(time=label_idx).to_array(dim='variable')
+            ds = self.lazy_labels[label].isel(time=label_idx, opa=member).to_array(dim='variable')
+            ds = ds.sel(y=slice(0, 239), x=slice(0,411))
             l_vars.append(ds)
         l_vals = xr.concat(l_vars, dim="variable")
         l_vals = l_vals.transpose("variable", "time", "y", "x")

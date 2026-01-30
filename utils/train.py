@@ -9,11 +9,17 @@ import importlib
 from utils.get_config import parse_section, config
 import utils.get_config as get_config
 import xarray as xr
+import os
 
 mesh = xr.open_dataset('/quobyte/maikesgrp/kkringel/oras5/ORCA025/mesh/mesh_mask.nc')
 mask = mesh['tmaskutil'].isel(t=0).values  # [y, x]
 mask = torch.tensor(mask, dtype=torch.float32)[None, None, :, :, None]
 mask = mask.permute(0, 1, 4, 2, 3) 
+
+# Set up environment variables for distributed training
+RANK = int(os.environ["SLURM_PROCID"])      # Global rank of the current process
+LOCAL_RANK = RANK % config.getint('TRAINING', 'ranks_per_node')                       # Local rank within the current node
+DEVICE = f"cuda:{LOCAL_RANK}"               # Assign GPU based on local rank\
 
 def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     # Training loop
@@ -26,6 +32,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
 
     model_type = model_type = config['MODEL']['type']
     model = get_config.get_model()
+    model.to(DEVICE)
     optimizer = get_config.get_optimizer(model)
     scheduler = get_config.get_scheduler(optimizer)
     scheduler_name = config['SCHEDULER']['type']   
@@ -43,6 +50,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
+            batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
             
             pred, concept_pred = model(batch)
             pred = pred*mask
@@ -65,6 +73,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             n_snaps = 0
             for val_batch, val_concept_y, val_y in val_loader:
                 val_batch = torch.nan_to_num(input_norm.normalize(val_batch), nan=0.0)
+                val_batch.to(DEVICE)
                 val_concept_y = torch.nan_to_num(concept_norm.normalize(val_concept_y), nan=0.0)
                 val_y = torch.nan_to_num(output_norm.normalize(val_y), nan=0.0)
 
@@ -112,6 +121,7 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             test_batch = torch.nan_to_num(input_norm.normalize(test_batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
+            test_batch, concept_y, y = test_batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
             pred, concept_pred = model(test_batch)
             pred = pred*mask
@@ -120,4 +130,4 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             n_snaps += 1          
         test_loss /= n_snaps
         print(f'test_loss:{test_loss}')
-    return test_loss
+    return test_loss         
