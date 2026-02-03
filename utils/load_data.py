@@ -6,12 +6,15 @@ import numpy as np
 import torch
 from utils.get_config import try_cast, parse_section, config
 
+xr.set_options(use_new_combine_kwarg_defaults=True)
+
 class EmulatorDataset(Dataset):
     def __init__(self):
         self.features = try_cast(config['DATASET']['features'])
         self.concepts = try_cast(config['DATASET']['concepts'])
         self.labels = try_cast(config['DATASET']['labels'])
         self.opas = try_cast(config['DATASET']['members'])
+        self.loc = config['DATASET']['location']
         self.window = config.getint('DATASET', 'context_window')
         self.offset = try_cast(config['DATASET']['offset'])
         self.start = config['DATASET']['start']
@@ -24,7 +27,7 @@ class EmulatorDataset(Dataset):
         for feat in self.features:
             data = []
             for opa in self.opas:
-                dp = xr.open_zarr(f"/quobyte/maikesgrp/sanah/na_crop/{opa}/{feat}_na.zarr")
+                dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
@@ -37,7 +40,7 @@ class EmulatorDataset(Dataset):
         for concept in self.concepts:
             data = []
             for opa in self.opas:
-                dp = xr.open_zarr(f"/quobyte/maikesgrp/sanah/na_crop/{opa}/{concept}_na.zarr")
+                dp = xr.open_zarr(f"{self.loc}/{opa}/{concept}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
@@ -50,7 +53,7 @@ class EmulatorDataset(Dataset):
         for label in self.labels:
             data = []
             for opa in self.opas:
-                dp = xr.open_zarr(f"/quobyte/maikesgrp/sanah/na_crop/{opa}/{label}_na.zarr")
+                dp = xr.open_zarr(f"{self.loc}/{opa}/{label}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
@@ -86,7 +89,7 @@ class EmulatorDataset(Dataset):
         X_vars = []
         for feat in self.features:
             var_slice = self.lazy_data[feat].isel(time=slice(time, time+self.window), opa=member).to_array(dim='variable')
-            var_slice = var_slice.sel(y=slice(0, 239),x=slice(0, 411))
+            var_slice = var_slice.sel(y=slice(0, 302),x=slice(0, 400))
             X_vars.append(var_slice.values)
         X_vals = np.concat(X_vars)
         return torch.from_numpy(X_vals).float()
@@ -94,11 +97,9 @@ class EmulatorDataset(Dataset):
     def get_concepts(self, member, time):
         c_vars = []
         concept_idx = [time+self.window-1+lead for lead in self.offset]
-        print(self.lazy_concepts)
         for concept in self.concepts:
-            print(concept)
             concept_slice = self.lazy_concepts[concept].isel(time=concept_idx, opa=member).to_array(dim='variable')
-            concept_slice = concept_slice.sel(y=slice(0, 239), x=slice(0,411))
+            concept_slice = concept_slice.sel(y=slice(0, 302), x=slice(0,400))
             c_vars.append(concept_slice)
         c_vals = xr.concat(c_vars, dim='variable')
         c_vals = c_vals.transpose("variable", "time", "y", "x")
@@ -109,7 +110,7 @@ class EmulatorDataset(Dataset):
         label_idx = [time+self.window-1+lead for lead in self.offset]
         for label in self.labels:
             ds = self.lazy_labels[label].isel(time=label_idx, opa=member).to_array(dim='variable')
-            ds = ds.sel(y=slice(0, 239), x=slice(0,411))
+            ds = ds.sel(y=slice(0, 302), x=slice(0,400))
             l_vars.append(ds)
         l_vals = xr.concat(l_vars, dim="variable")
         l_vals = l_vals.transpose("variable", "time", "y", "x")
