@@ -40,9 +40,15 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
 
     losses = []
     val_losses = []
+    pred_losses = []
+    concept_losses = []
+    val_pred_losses = []
+    val_concept_losses = []
     for epoch in range(start_epoch, n_epochs):
         model.train(True)
         train_loss_accum = None
+        train_pred_loss_accum = None
+        train_concept_loss_accum = None
         n_snaps = 0
         for batch, concept_y, y in train_loader:
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
@@ -54,18 +60,29 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             pred = pred*mask
             concept_pred = concept_pred*mask
 
-            loss = ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))
+            pred_loss = out_loss_fn(pred, y)
+            concept_loss = concept_loss_fn(concept_pred, concept_y)
+            loss = ((1-concept_lambda) * pred_loss) + (concept_lambda * concept_loss)
             n_snaps += 1
             if train_loss_accum:
               train_loss_accum = train_loss_accum.add(loss)
+              train_pred_loss_accum = train_pred_loss_accum.add(pred_loss)
+              train_concept_loss_accum = train_concept_loss_accum.add(concept_loss)
             else:
               train_loss_accum = loss
+              train_pred_loss_accum = pred_loss
+              train_concept_loss_accum = concept_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
         loss_mean = train_loss_accum / n_snaps
+        pred_loss_mean = train_pred_loss_accum / n_snaps
+        concept_loss_mean = train_concept_loss_accum / n_snaps
+
         
         val_loss = 0
+        val_pred_loss = 0
+        val_concept_loss = 0
         model.eval()
         with torch.no_grad():
             n_snaps = 0
@@ -79,9 +96,13 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 pred = pred*mask
                 concept_pred = concept_pred*mask
 
+                val_pred_loss += out_loss_fn(pred, val_y)
+                val_concept_loss += concept_loss_fn(concept_pred, val_concept_y)
                 val_loss += ((1-concept_lambda) * out_loss_fn(pred, val_y)) + (concept_lambda * concept_loss_fn(concept_pred, val_concept_y))
                 n_snaps += 1
             val_loss_mean = val_loss / n_snaps 
+            val_pred_loss_mean = val_pred_loss / n_snaps
+            val_concept_loss_mean = val_concept_loss / n_snaps
             if scheduler_name == 'ReduceLROnPlateau':
                 # Step the scheduler based on validation loss
                 scheduler.step(val_loss_mean)
@@ -94,6 +115,10 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             print(f"learning rate: {optimizer.param_groups[0]['lr']}")
         losses.append(loss_mean.item())
         val_losses.append(val_loss_mean.item())
+        pred_losses.append(pred_loss_mean.item())
+        concept_losses.append(concept_loss_mean.item())
+        val_pred_losses.append(val_pred_loss_mean.item())
+        val_concept_losses.append(val_concept_loss_mean.item())
         if epoch % config.getint('OUTPUT', 'n_epochs_between_checkpoints') == 0:
             #update to have model save with more detail
             save_model = f"{model_type}"        
@@ -103,8 +128,12 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             }, f"{output}/{save_model}_epoch{epoch}.pt")
             torch.save(losses, f"{output}/losses.pt")
             torch.save(val_losses, f"{output}/val_losses.pt")
+            torch.save(pred_losses, f"{output}/pred_losses.pt")
+            torch.save(concept_losses, f"{output}/concept_losses.pt")
+            torch.save(val_pred_losses, f"{output}/val_pred_losses.pt")
+            torch.save(val_concept_losses, f"{output}/val_concept_losses.pt")
      #change to be BESTMODEL
-    return model, losses, val_losses
+    return model, [losses, pred_losses, concept_losses,], [val_losses,  val_pred_losses, val_concept_losses]
 
 def eval(input_norm, concept_norm, output_norm, model, test_loader):
     concept_loss_fn = config['TRAINING']['concept_loss_fn']
@@ -114,6 +143,8 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
 
     test_loss = 0
+    pred_loss = 0
+    concept_loss = 0
     with torch.nograd():
         for test_batch, concept_y, y in test_loader:
             test_batch = torch.nan_to_num(input_norm.normalize(test_batch), nan=0.0)
@@ -124,8 +155,14 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             pred, concept_pred = model(test_batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
+            pred_loss += out_loss_fn(pred, y)
+            concept_loss += concept_loss_fn(concept_pred, concept_y)
             test_loss += ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))     
             n_snaps += 1          
         test_loss /= n_snaps
+        pred_loss /= n_snaps
+        concept_loss /= n_snaps
         print(f'test_loss:{test_loss}')
-    return test_loss         
+        print(f'pred_loss:{pred_loss}')
+        print(f'concept_loss:{concept_loss}')
+    return [test_loss, pred_loss, concept_loss]
