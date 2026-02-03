@@ -17,4 +17,5 @@ def visualize(train_losses, val_losses, plot_test):
                        f"val: {val_losses[-1]:0.2e}",
                        xy=(0.2, .75),
                        xycoords='axes fraction')
-    fig.savefig('/home/kkringel/emulator/AIKnowledgeDiscoveryEngine/temp_output/temp.png', dpi=400)
+    output = config['OUTPUT']['dir']
+    fig.savefig(f'{output}/viz.png', dpi=400)

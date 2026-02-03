@@ -25,7 +25,7 @@ def get_dataset():
     stats_loader = DataLoader(train_set, batch_size = 1, num_workers = 0, shuffle = False)
     input_norm = Normalize(len(try_cast(config['DATASET']['features']))) 
     concept_norm = Normalize(len(try_cast(config['DATASET']['concepts'])))
-    output_norm = Normalize(len(try_cast(config['DATASET']['labels'])))    
+    output_norm = Normalize(len(try_cast(config['DATASET']['labels'])))  
     for batch, concept_y, y in stats_loader:    
         B, C, T, Y, X = batch.shape
         for c in range(C):               
@@ -40,9 +40,10 @@ def get_dataset():
     concept_norm.finalize()
     output_norm.finalize()
 
-    train_loader = DataLoader(train_set, batch_size = 5, shuffle = True)
-    val_loader = DataLoader(val_set, batch_size = 5, shuffle = True)
-    test_loader = DataLoader(test_set, batch_size = 5, shuffle = True)
+    batch_size =  config.getint('DATASET', 'batch_size') 
+    train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
+    val_loader = DataLoader(val_set, batch_size = batch_size, shuffle = True)
+    test_loader = DataLoader(test_set, batch_size = batch_size, shuffle = True)
 
     return input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader
     

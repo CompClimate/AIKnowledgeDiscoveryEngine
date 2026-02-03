@@ -9,11 +9,15 @@ import importlib
 from utils.get_config import parse_section, config
 import utils.get_config as get_config
 import xarray as xr
+import os
 
-mesh = xr.open_dataset('/quobyte/maikesgrp/kkringel/oras5/ORCA025/mesh/mesh_mask.nc')
-mask = mesh['tmaskutil'].isel(t=0).values  # [y, x]
-mask = torch.tensor(mask, dtype=torch.float32)[None, None, :, :, None]
-mask = mask.permute(0, 1, 4, 2, 3) 
+loc = config['DATASET']['location']
+mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+mesh = mesh['tmaskutil'].isel(t=0)  # [y, x]
+mask = mesh.sel(y=slice(0, 302), x=slice(0,400)).values
+mask = torch.tensor(mask, dtype=torch.float32)[None, None, None, :, :]
+
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     # Training loop
@@ -26,6 +30,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
 
     model_type = model_type = config['MODEL']['type']
     model = get_config.get_model()
+    model.to(DEVICE)
     optimizer = get_config.get_optimizer(model)
     scheduler = get_config.get_scheduler(optimizer)
     scheduler_name = config['SCHEDULER']['type']   
@@ -43,12 +48,13 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
+            batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
             
             pred, concept_pred = model(batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
 
-            loss = out_loss_fn(pred, y) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))
+            loss = ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))
             n_snaps += 1
             if train_loss_accum:
               train_loss_accum = train_loss_accum.add(loss)
@@ -65,6 +71,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             n_snaps = 0
             for val_batch, val_concept_y, val_y in val_loader:
                 val_batch = torch.nan_to_num(input_norm.normalize(val_batch), nan=0.0)
+                val_batch.to(DEVICE)
                 val_concept_y = torch.nan_to_num(concept_norm.normalize(val_concept_y), nan=0.0)
                 val_y = torch.nan_to_num(output_norm.normalize(val_y), nan=0.0)
 
@@ -72,7 +79,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 pred = pred*mask
                 concept_pred = concept_pred*mask
 
-                val_loss += out_loss_fn(pred, val_y) + (concept_lambda * concept_loss_fn(concept_pred, val_concept_y))
+                val_loss += ((1-concept_lambda) * out_loss_fn(pred, val_y)) + (concept_lambda * concept_loss_fn(concept_pred, val_concept_y))
                 n_snaps += 1
             val_loss_mean = val_loss / n_snaps 
             if scheduler_name == 'ReduceLROnPlateau':
@@ -112,12 +119,13 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             test_batch = torch.nan_to_num(input_norm.normalize(test_batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
+            test_batch, concept_y, y = test_batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
             pred, concept_pred = model(test_batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
-            test_loss += out_loss_fn(pred, y) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))     
+            test_loss += ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))     
             n_snaps += 1          
         test_loss /= n_snaps
         print(f'test_loss:{test_loss}')
-    return test_loss
+    return test_loss         
