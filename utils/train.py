@@ -11,10 +11,11 @@ import utils.get_config as get_config
 import xarray as xr
 import os
 
-mesh = xr.open_dataset('/quobyte/maikesgrp/kkringel/oras5/ORCA025/mesh/mesh_mask.nc')
-mask = mesh['tmaskutil'].isel(t=0).values  # [y, x]
-mask = torch.tensor(mask, dtype=torch.float32)[None, None, :, :, None]
-mask = mask.permute(0, 1, 4, 2, 3) 
+loc = config['DATASET']['location']
+mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+mesh = mesh['tmaskutil'].isel(t=0)  # [y, x]
+mask = mesh.sel(y=slice(0, 302), x=slice(0,400)).values
+mask = torch.tensor(mask, dtype=torch.float32)[None, None, None, :, :]
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -53,7 +54,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             pred = pred*mask
             concept_pred = concept_pred*mask
 
-            loss = out_loss_fn(pred, y) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))
+            loss = ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))
             n_snaps += 1
             if train_loss_accum:
               train_loss_accum = train_loss_accum.add(loss)
@@ -78,7 +79,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 pred = pred*mask
                 concept_pred = concept_pred*mask
 
-                val_loss += out_loss_fn(pred, val_y) + (concept_lambda * concept_loss_fn(concept_pred, val_concept_y))
+                val_loss += ((1-concept_lambda) * out_loss_fn(pred, val_y)) + (concept_lambda * concept_loss_fn(concept_pred, val_concept_y))
                 n_snaps += 1
             val_loss_mean = val_loss / n_snaps 
             if scheduler_name == 'ReduceLROnPlateau':
@@ -123,7 +124,7 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             pred, concept_pred = model(test_batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
-            test_loss += out_loss_fn(pred, y) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))     
+            test_loss += ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))     
             n_snaps += 1          
         test_loss /= n_snaps
         print(f'test_loss:{test_loss}')
