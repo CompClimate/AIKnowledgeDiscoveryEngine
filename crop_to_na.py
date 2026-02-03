@@ -11,7 +11,6 @@ import argparse
 import multiprocessing as mp
 from itertools import product
 import gsw
-from visualize import concept_viz, target_viz
 from scipy.ndimage import gaussian_filter
 import xgcm
 import calendar
@@ -24,11 +23,11 @@ def crop_concept_to_zarr(
     concept: str,
     cell: str,
     years=range(1980, 2019),
-    lon_bounds=(-80, 30),
-    lat_bounds=(55, 85),
+    lon_bounds=(-80, 20),
+    lat_bounds=(20, 66),
 ):
     # Output directory
-    out_dir = f"/quobyte/maikesgrp/sanah/na_crop/{member}"
+    out_dir = f"/quobyte/maikesgrp/sanah/na_crop_latest/{member}"
     os.makedirs(out_dir, exist_ok=True)
     zarr_path = os.path.join(out_dir, f"{concept}_na.zarr")
 
@@ -38,7 +37,7 @@ def crop_concept_to_zarr(
         for month_idx in range(1, 13):
             ym = f"{year}{month_idx:02d}"
             infile = (
-                f"/quobyte/maikesgrp/sanah/target/{concept}/{member}/"
+                f"/quobyte/maikesgrp/sanah/concepts/{concept}/{member}/"
                 f"{concept}_{ym}_{cell}.nc"
             )
 
@@ -84,12 +83,12 @@ def crop_input_to_zarr(
     member: str,
     concept: str,
     cell: str,
-    years=range(1980, 2019),
-    lon_bounds=(-80, 30),
-    lat_bounds=(55, 85),
+    years=range(1979, 2019),
+    lon_bounds=(-80, 20),
+    lat_bounds=(20, 66),
 ):
     # Output directory
-    out_dir = f"/quobyte/maikesgrp/sanah/na_crop/{member}"
+    out_dir = f"/quobyte/maikesgrp/sanah/na_crop_latest/{member}"
     os.makedirs(out_dir, exist_ok=True)
     zarr_path = os.path.join(out_dir, f"{concept}_na.zarr")
 
@@ -154,4 +153,4 @@ if __name__ == "__main__":
     grids = {'sometauy': 'V', 'sozotaux': 'U', 'sosaline': 'T', 'sosstsst': 'T', 'sohefldo': 'T', 
             'somxl010': 'T'}
     
-    crop_concept_to_zarr(member, concept, cell, years=range(1979, 2019))
+    crop_input_to_zarr(member, concept, grids[concept], years=range(1979, 2019))
