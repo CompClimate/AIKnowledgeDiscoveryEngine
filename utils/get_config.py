@@ -20,12 +20,11 @@ def try_cast(value):
             continue
     return value
 
-def parse_section(config, section):
+def parse_section(section):
     """Parses a section of the config and attempts to cast values to appropriate types."""
     return {k: try_cast(v) for k, v in config[section].items()}
 
-def get_model(config):
-    print(config.sections())
+def get_model():
     model_type = config['MODEL']['type']
     model_module = config['MODEL']['definition']
     module = importlib.import_module(model_module)
@@ -44,7 +43,7 @@ def get_optimizer(model):
     optimizer_module = config['OPTIMIZER']['definition']     
     module = importlib.import_module(optimizer_module)
     optimizer_class = getattr(module, optimizer_name)
-    optimizer_params = parse_section(config, 'OPTIMIZER.HYPERPARAMETERS')
+    optimizer_params = parse_section('OPTIMIZER.HYPERPARAMETERS')
     optimizer = optimizer_class(model.parameters(), **optimizer_params)
     return optimizer
 
@@ -53,6 +52,6 @@ def get_scheduler(optimizer):
     scheduler_name = config['SCHEDULER']['type']  
     module = importlib.import_module(module_name)
     scheduler_class = getattr(module, scheduler_name)
-    scheduler_params = parse_section(config, 'SCHEDULER.HYPERPARAMETERS')
+    scheduler_params = parse_section('SCHEDULER.HYPERPARAMETERS')
     scheduler = scheduler_class(optimizer, **scheduler_params)
     return scheduler
