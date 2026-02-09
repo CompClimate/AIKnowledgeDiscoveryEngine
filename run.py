@@ -1,13 +1,13 @@
 #from utils.get_config import get_config
 from utils.train import train, eval
 from utils.visualization import visualize
-from utils.get_data import get_dataset
+from utils.get_data import get_dataset, get_dataset_preload
 import time
 
 def run():
     test = False
     start = time.time()
-    input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
+    input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset_preload()
     get_data_done = time.time()
     print('get data took ', get_data_done - start)
     model, train_losses, val_losses = train(input_norm, concept_norm, output_norm, train_loader, val_loader)
