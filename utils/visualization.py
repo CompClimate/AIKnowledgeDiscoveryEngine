@@ -43,6 +43,41 @@ def visualize(train_losses, val_losses, plot_test):
     fig.savefig(f'{output}/viz.png', dpi=400)
 
 
+def plot_detailed_losses(losses_path='/quobyte/maikesgrp/sanah/models/detailed_losses.pt', output_dir='/quobyte/maikesgrp/sanah/models'):
+    data = torch.load(losses_path, weights_only=False)
+    train_pred = data['train_pred']
+    val_pred = data['val_pred']
+    train_per_concept = data['train_per_concept']
+    val_per_concept = data['val_per_concept']
+    concept_names = list(train_per_concept.keys())
+
+    # Panel 1: prediction loss, Panel 2: per-concept losses
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5), layout='constrained')
+
+    # Prediction loss
+    ax[0].semilogy(train_pred, label='train')
+    ax[0].semilogy(val_pred, label='val')
+    ax[0].set_xlabel('Epoch')
+    ax[0].set_ylabel('BCEWithLogitsLoss')
+    ax[0].set_title('Prediction Loss')
+    ax[0].legend()
+
+    # Per-concept losses (same colour per concept, solid=train, dashed=val)
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    for i, name in enumerate(concept_names):
+        c = colors[i % len(colors)]
+        ax[1].semilogy(train_per_concept[name], color=c, linestyle='-', label=f'{name} (train)')
+        ax[1].semilogy(val_per_concept[name], color=c, linestyle='--', label=f'{name} (val)')
+    ax[1].set_xlabel('Epoch')
+    ax[1].set_ylabel('MSELoss')
+    ax[1].set_title('Per-Concept Loss')
+    ax[1].legend(fontsize=7, ncol=2)
+
+    fig.savefig(f'{output_dir}/detailed_losses.png', dpi=300)
+    plt.close(fig)
+    print(f'Saved {output_dir}/detailed_losses.png')
+
+
 def pairity_for_target():
     home_dir = os.path.expanduser("~")
     print('Starting parity visualization...', flush=True)
@@ -281,12 +316,8 @@ def plot_concept_pred():
 def plot_unet_pred():
     from models import UNetCBM
     from utils.get_config import config, try_cast
-
-    # Load normalization stats
-    home_dir = os.path.expanduser("~")
-    stats_path = os.path.join(home_dir, 'normalization_stats.pt')
-    norms = torch.load(stats_path, weights_only=False)
-    input_norm = norms['input']
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
 
     # Load land mask
     loc = config['DATASET']['location']
@@ -296,10 +327,31 @@ def plot_unet_pred():
 
     # Setup validation set using preloaded data
     from utils.get_data import get_dataset_preload
-    _, _, _, _, val_loader, _ = get_dataset_preload()
+    input_norm, concept_norm, _, _, val_loader, _ = get_dataset_preload()
     data, concept_true, target_true = next(iter(val_loader))
     # Take second sample for visualization
-    data, concept_true, target_true = data[1:2], concept_true[1:2], target_true[1:2]
+    val_sample_idx = 1
+    data, concept_true, target_true = data[val_sample_idx:val_sample_idx+1], concept_true[val_sample_idx:val_sample_idx+1], target_true[val_sample_idx:val_sample_idx+1]
+
+    # Compute target date for this sample
+    window = config.getint('DATASET', 'context_window')
+    offsets = try_cast(config['DATASET']['offset'])
+    n_members = len(try_cast(config['DATASET']['members']))
+    start_date = datetime.strptime(config['DATASET']['start'], "%Y%m")
+    end_date = datetime.strptime(config['DATASET']['end'], "%Y%m")
+    dates = []
+    cur = start_date
+    while cur <= end_date:
+        dates.append(cur.strftime("%Y%m"))
+        cur += relativedelta(months=1)
+    n_times = len(dates) - window - max(offsets) + 1
+    train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)
+    train_end = train_time_end * n_members
+    original_idx = train_end + val_sample_idx
+    member = original_idx % n_members
+    time_idx = original_idx // n_members
+    target_dates = {off: dates[time_idx + window - 1 + off] for off in offsets}
+    print(f'Val sample: original idx={original_idx}, member=opa{member}, target dates={target_dates}')
 
     print('set up validation')
 
@@ -315,7 +367,6 @@ def plot_unet_pred():
     model_dir = '/quobyte/maikesgrp/sanah/model_test'
     epochs_to_check = list(range(0, 100, 5))  # [0, 5, 10, ..., 95]
     steps_mapping = [1, 3, 6]
-    cmap = ListedColormap(['#1f77b4', '#ff7f0e'])
 
     # One figure per lead time
     for time_step in range(3):
@@ -364,12 +415,138 @@ def plot_unet_pred():
         cbar.set_label('P(MLHC Event)')
 
         current_step = steps_mapping[time_step]
-        fig.suptitle(f'UNet CBM Predictions: Lead Time {current_step} months', fontsize=16)
+        target_month = target_dates[current_step]
+        fig.suptitle(f'UNet CBM Predictions: Lead Time {current_step} months (target: {target_month}, opa{member})', fontsize=16)
         save_name = f'./unet_pred_lead{current_step}.png'
         fig.savefig(save_name, dpi=300, bbox_inches='tight')
         plt.close(fig)
         print(f'Saved {save_name}', flush=True)
 
+def plot_unet_concept():
+    from models import UNetCBM
+    from utils.get_config import config, try_cast
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+    concepts = ['sowsc', 'voep', 'vori', 'von2', 'vos2', 'vohfe']
+
+    # Load land mask
+    loc = config['DATASET']['location']
+    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    land_mask = (mask_2d == 0)
+
+    # Setup validation set using preloaded data
+    from utils.get_data import get_dataset_preload
+    input_norm, concept_norm, _, _, val_loader, _ = get_dataset_preload()
+    data, concept_true, target_true = next(iter(val_loader))
+    # Take second sample for visualization
+    val_sample_idx = 1
+    data, concept_true, target_true = data[val_sample_idx:val_sample_idx+1], concept_true[val_sample_idx:val_sample_idx+1], target_true[val_sample_idx:val_sample_idx+1]
+
+    # Compute target date for this sample
+    window = config.getint('DATASET', 'context_window')
+    offsets = try_cast(config['DATASET']['offset'])
+    n_members = len(try_cast(config['DATASET']['members']))
+    start_date = datetime.strptime(config['DATASET']['start'], "%Y%m")
+    end_date = datetime.strptime(config['DATASET']['end'], "%Y%m")
+    dates = []
+    cur = start_date
+    while cur <= end_date:
+        dates.append(cur.strftime("%Y%m"))
+        cur += relativedelta(months=1)
+    n_times = len(dates) - window - max(offsets) + 1
+    train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)
+    train_end = train_time_end * n_members
+    original_idx = train_end + val_sample_idx
+    member = original_idx % n_members
+    time_idx = original_idx // n_members
+    target_dates = {off: dates[time_idx + window - 1 + off] for off in offsets}
+    print(f'Val sample: original idx={original_idx}, member=opa{member}, target dates={target_dates}')
+
+    print('set up validation')
+
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Build UNetCBM with same config as training
+    model = UNetCBM(
+        n_features=len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
+        n_concepts=len(try_cast(config['DATASET']['concepts'])),
+        output_dim=len(try_cast(config['DATASET']['offset']))
+    )
+    model.to(DEVICE)
+
+    print(f'initialized model on {DEVICE}')
+
+    # Precompute: normalize + nan_to_num + move to GPU once
+    data_gpu = torch.nan_to_num(input_norm.normalize(data), nan=0.0).to(DEVICE)
+    # concept_true_denorm = concept_norm.denormalize(concept_true)
+
+    model_dir = '/quobyte/maikesgrp/sanah/model_test'
+    epochs_to_check = list(range(0, 100, 5))  # [0, 5, 10, ..., 95]
+    steps_mapping = [1, 3, 6]
+
+    # One figure per lead time per concept
+    for ci in range(len(concepts)):
+        for time_step in range(3):
+            print(f'starting {concepts[ci]} time step {time_step}', flush=True)
+            n_cols = len(epochs_to_check) + 1  # +1 for ground truth
+            n_rows = 4
+            cols_per_row = (n_cols + n_rows - 1) // n_rows  # ceil division
+            fig, axes = plt.subplots(3, 7, figsize=(cols_per_row * 4, n_rows * 3.5), layout='constrained')
+            axes = axes.flatten()
+
+            # Hide unused axes
+            for ax in axes:
+                ax.axis('off')
+
+            # Ground truth concept ci (already denormalized)
+            gt = concept_true[0, ci, time_step, :, :].cpu().numpy()
+            gt_masked = np.ma.masked_where(land_mask, gt)
+            clean_arr = np.ma.filled(gt_masked.astype(float), np.nan)
+            vmin, vmax = np.nanpercentile(clean_arr, [2, 98])
+            print('vmin: ', vmin)
+            print('vmax: ', vmax)
+            #breakpoint()
+
+            axes[0].set_facecolor('white')
+            axes[0].imshow(gt_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax)
+            axes[0].set_title("Ground Truth")
+            axes[0].axis('on')
+
+            for ei, epoch in enumerate(epochs_to_check):
+                checkpoint_path = f'{model_dir}/unet_epoch{epoch}.pt'
+                if not os.path.exists(checkpoint_path):
+                    print(f'Checkpoint not found: {checkpoint_path}', flush=True)
+                    continue
+                checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+                model.load_state_dict(checkpoint['model_state_dict'])
+                model.eval()
+
+                with torch.no_grad():
+                    _, concept = model(data_gpu)
+                    #breakpoint()
+                    concept_denorm = concept_norm.denormalize(concept.cpu())
+                    pred_2d = concept_denorm[0, ci, time_step, :, :].numpy()
+
+                ax = axes[ei + 1]
+                ax.set_facecolor('white')
+                ax.axis('on')
+                pred_masked = np.ma.masked_where(land_mask, pred_2d)
+                im = ax.imshow(pred_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax)
+                ax.set_title(f"Epoch {epoch}")
+
+            # Add shared colorbar
+            cbar = fig.colorbar(im, ax=axes.tolist(), fraction=0.02, pad=0.02)
+
+            current_step = steps_mapping[time_step]
+            target_month = target_dates[current_step]
+            fig.suptitle(f'UNet CBM {concepts[ci].upper()} Prediction: Lead Time {current_step} months (target: {target_month}, opa{member})', fontsize=16)
+            save_name = f'/quobyte/maikesgrp/sanah/unet_{concepts[ci]}_lead{current_step}.png'
+            fig.savefig(save_name, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            print(f'Saved {save_name}', flush=True)
+
 if __name__ == "__main__":
 
     plot_unet_pred()
+    plot_unet_concept()

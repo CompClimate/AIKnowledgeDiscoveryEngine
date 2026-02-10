@@ -36,8 +36,14 @@ def get_dataset():
     dataset = EmulatorDataset()
     print('dataset initialized', flush=True)
     n = len(dataset)
-    train_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n)
-    val_end = train_end + int(config.getfloat('MODEL.HYPERPARAMETERS', 'test_frac') * n)
+    n_members = len(try_cast(config['DATASET']['members']))
+    n_times = n // n_members
+
+    # Split by time steps so no month appears in multiple sets
+    train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)
+    val_time_end = train_time_end + int(config.getfloat('MODEL.HYPERPARAMETERS', 'test_frac') * n_times)
+    train_end = train_time_end * n_members
+    val_end = val_time_end * n_members
 
     train_idx = list(range(0, train_end))
     val_idx = list(range(train_end, val_end))
@@ -79,48 +85,54 @@ def get_dataset():
     return input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader
 
 def get_dataset_preload():
-    from torch.utils.data import TensorDataset
     start_time = time.time()
     dataset = EmulatorDataset()
     print('dataset initialized', flush=True)
+
+    # Load all zarr data into memory so __getitem__ is just numpy slicing
+    for feat in dataset.features:
+        dataset.lazy_data[feat].load()
+        print(f'loaded feature {feat}', flush=True)
+    for concept in dataset.concepts:
+        dataset.lazy_concepts[concept].load()
+        print(f'loaded concept {concept}', flush=True)
+    for label in dataset.labels:
+        dataset.lazy_labels[label].load()
+        print(f'loaded label {label}', flush=True)
+    print('all zarr data loaded into memory', flush=True)
+
+    # Split by time steps so no month appears in multiple sets
     n = len(dataset)
+    n_members = len(try_cast(config['DATASET']['members']))
+    n_times = n // n_members
+    train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)
+    val_time_end = train_time_end + int(config.getfloat('MODEL.HYPERPARAMETERS', 'test_frac') * n_times)
+    train_end = train_time_end * n_members
+    val_end = val_time_end * n_members
 
-    # Preload all data into memory
-    all_inputs, all_concepts, all_labels = [], [], []
-    for i in range(n):
-        x, c, y = dataset[i]
-        all_inputs.append(x)
-        all_concepts.append(c)
-        all_labels.append(y)
-        if i % 50 == 0:
-            print(f'preloading {i}/{n}', flush=True)
-    all_inputs = torch.stack(all_inputs)
-    all_concepts = torch.stack(all_concepts)
-    all_labels = torch.stack(all_labels)
-    print(f'preloaded all data: inputs={all_inputs.shape}, concepts={all_concepts.shape}, labels={all_labels.shape}', flush=True)
+    train_idx = list(range(0, train_end))
+    val_idx = list(range(train_end, val_end))
+    test_idx = list(range(val_end, n))
 
-    # Split
-    train_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n)
-    val_end = train_end + int(config.getfloat('MODEL.HYPERPARAMETERS', 'test_frac') * n)
-
-    train_set = TensorDataset(all_inputs[:train_end], all_concepts[:train_end], all_labels[:train_end])
-    val_set = TensorDataset(all_inputs[train_end:val_end], all_concepts[train_end:val_end], all_labels[train_end:val_end])
-    test_set = TensorDataset(all_inputs[val_end:], all_concepts[val_end:], all_labels[val_end:])
+    train_set = Subset(dataset, train_idx)
+    val_set = Subset(dataset, val_idx)
+    test_set = Subset(dataset, test_idx)
+    print('subsetting done', flush=True)
 
     # Compute normalization stats from training set
+    stats_loader = DataLoader(train_set, batch_size=1, num_workers=0, shuffle=False)
     input_norm = Normalize(len(try_cast(config['DATASET']['features'])))
     concept_norm = Normalize(len(try_cast(config['DATASET']['concepts'])))
     output_norm = Normalize(len(try_cast(config['DATASET']['labels'])))
-    for i in range(len(train_set)):
-        batch, concept_y, y = train_set[i]
-        batch = batch.unsqueeze(0)
-        concept_y = concept_y.unsqueeze(0)
-        y = y.unsqueeze(0)
-        for c in range(batch.shape[1]):
+    for i, (batch, concept_y, y) in enumerate(stats_loader):
+        B, C, T, Y, X = batch.shape
+        for c in range(C):
             input_norm.update(c, batch)
-        for f in range(concept_y.shape[1]):
+        B, F, T, Y, X = concept_y.shape
+        for f in range(F):
             concept_norm.update(f, concept_y)
-        for f in range(y.shape[1]):
+        B, F, T, Y, X = y.shape
+        for f in range(F):
             output_norm.update(f, y)
     input_norm.finalize()
     concept_norm.finalize()
@@ -128,9 +140,9 @@ def get_dataset_preload():
     print('normalization stats computed', flush=True)
 
     batch_size = config.getint('DATASET', 'batch_size')
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
     end_time = time.time()
     print(f'done in {end_time - start_time}', flush=True)
 
