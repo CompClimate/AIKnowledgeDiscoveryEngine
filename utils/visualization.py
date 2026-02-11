@@ -21,6 +21,27 @@ else:
 # 3. NOW import the dataset (it will now see the populated config)
 from utils.load_data import EmulatorDataset
 from torch.utils.data import Subset, DataLoader
+import glob
+
+
+def find_output_dir():
+    """Find the latest output directory matching the current config."""
+    config = get_config.config
+    base = '/quobyte/maikesgrp/sanah/models'
+    lam = config.getfloat('TRAINING', 'concept_lambda')
+    ep = config.getint('TRAINING', 'epochs')
+    lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
+    bs = config.getint('DATASET', 'batch_size')
+    loss = config['TRAINING']['out_loss_fn']
+    name = f"lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}"
+    pattern = f"{base}/{name}*"
+    matches = sorted(glob.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(f'No output directory found matching {pattern}')
+    # Return the latest (highest version)
+    result = matches[-1]
+    print(f'Using output directory: {result}', flush=True)
+    return result
 
 
 def visualize(train_losses, val_losses, plot_test):
@@ -43,7 +64,11 @@ def visualize(train_losses, val_losses, plot_test):
     fig.savefig(f'{output}/viz.png', dpi=400)
 
 
-def plot_detailed_losses(losses_path='/quobyte/maikesgrp/sanah/models/detailed_losses.pt', output_dir='/quobyte/maikesgrp/sanah/models'):
+def plot_detailed_losses(losses_path=None, output_dir=None):
+    if output_dir is None:
+        output_dir = find_output_dir()
+    if losses_path is None:
+        losses_path = f'{output_dir}/detailed_losses.pt'
     data = torch.load(losses_path, weights_only=False)
     train_pred = data['train_pred']
     val_pred = data['val_pred']
@@ -51,27 +76,47 @@ def plot_detailed_losses(losses_path='/quobyte/maikesgrp/sanah/models/detailed_l
     val_per_concept = data['val_per_concept']
     concept_names = list(train_per_concept.keys())
 
-    # Panel 1: prediction loss, Panel 2: per-concept losses
-    fig, ax = plt.subplots(1, 2, figsize=(12, 5), layout='constrained')
+    # Compute combined loss: (1 - lambda) * pred + lambda * mean(concept losses)
+    from utils.get_config import config
+    concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
+    n_epochs = len(train_pred)
+    train_combined = []
+    val_combined = []
+    for e in range(n_epochs):
+        train_concept_mean = sum(train_per_concept[name][e] for name in concept_names) / len(concept_names)
+        val_concept_mean = sum(val_per_concept[name][e] for name in concept_names) / len(concept_names)
+        train_combined.append((1 - concept_lambda) * train_pred[e] + concept_lambda * train_concept_mean)
+        val_combined.append((1 - concept_lambda) * val_pred[e] + concept_lambda * val_concept_mean)
+
+    # Panel 1: combined loss, Panel 2: prediction loss, Panel 3: per-concept losses
+    fig, ax = plt.subplots(1, 3, figsize=(18, 5), layout='constrained')
+
+    # Combined loss
+    ax[0].semilogy(train_combined, label='train')
+    ax[0].semilogy(val_combined, label='val')
+    ax[0].set_xlabel('Epoch')
+    ax[0].set_ylabel('Loss')
+    ax[0].set_title(f'Combined Loss (lambda={concept_lambda})')
+    ax[0].legend()
 
     # Prediction loss
-    ax[0].semilogy(train_pred, label='train')
-    ax[0].semilogy(val_pred, label='val')
-    ax[0].set_xlabel('Epoch')
-    ax[0].set_ylabel('BCEWithLogitsLoss')
-    ax[0].set_title('Prediction Loss')
-    ax[0].legend()
+    ax[1].semilogy(train_pred, label='train')
+    ax[1].semilogy(val_pred, label='val')
+    ax[1].set_xlabel('Epoch')
+    ax[1].set_ylabel('BCEWithLogitsLoss')
+    ax[1].set_title('Prediction Loss')
+    ax[1].legend()
 
     # Per-concept losses (same colour per concept, solid=train, dashed=val)
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     for i, name in enumerate(concept_names):
         c = colors[i % len(colors)]
-        ax[1].semilogy(train_per_concept[name], color=c, linestyle='-', label=f'{name} (train)')
-        ax[1].semilogy(val_per_concept[name], color=c, linestyle='--', label=f'{name} (val)')
-    ax[1].set_xlabel('Epoch')
-    ax[1].set_ylabel('MSELoss')
-    ax[1].set_title('Per-Concept Loss')
-    ax[1].legend(fontsize=7, ncol=2)
+        ax[2].semilogy(train_per_concept[name], color=c, linestyle='-', label=f'{name} (train)')
+        ax[2].semilogy(val_per_concept[name], color=c, linestyle='--', label=f'{name} (val)')
+    ax[2].set_xlabel('Epoch')
+    ax[2].set_ylabel('MSELoss')
+    ax[2].set_title('Per-Concept Loss')
+    ax[2].legend(fontsize=7, ncol=2)
 
     fig.savefig(f'{output_dir}/detailed_losses.png', dpi=300)
     plt.close(fig)
@@ -229,7 +274,7 @@ def plot_val():
     epochs_to_check = [0, 5, 10, 15] 
     fig, axes = plt.subplots(1, len(epochs_to_check) + 1, figsize=(20, 5))
     cmap = ListedColormap(['#1f77b4', '#ff7f0e'])
-    im = axes[0].imshow(target_true.squeeze()[0, :, :], vmin=0, vmax=1, cmap=cmap, aspect='equal')
+    im = axes[0].imshow(target_true.squeeze()[0, :, :], vmin=0, vmax=1, cmap=cmap, aspect='equal', origin='lower')
     axes[0].set_title("Ground Truth")
 
     for i, epoch in enumerate(epochs_to_check):
@@ -252,7 +297,7 @@ def plot_val():
             )
             pred_2d = binary_preds[0, 0, 0, :, :].cpu().numpy()
             print('binary: ', pred_2d)
-            im = axes[i+1].imshow(pred_2d, vmin=0, vmax=1, cmap=cmap, aspect='equal')
+            im = axes[i+1].imshow(pred_2d, vmin=0, vmax=1, cmap=cmap, aspect='equal', origin='lower')
             axes[i+1].set_title(f"Epoch {epoch}")
             if i+1 == 4:
                 cbar = plt.colorbar(im, ax=axes[i+1], fraction=0.046, pad=0.04, ticks=[0, 1])
@@ -287,7 +332,7 @@ def plot_concept_pred():
         data, concept_true, target_true = next(iter(val_loader))
         epochs_to_check = [0, 5, 10, 15] 
         fig, axes = plt.subplots(1, len(epochs_to_check) + 1, figsize=(20, 5))
-        im = axes[0].imshow(concept_true.squeeze()[j, 0, :, :], cmap='viridis', aspect='equal')
+        im = axes[0].imshow(concept_true.squeeze()[j, 0, :, :], cmap='viridis', aspect='equal', origin='lower')
         axes[0].set_title("Ground Truth")
         fig.suptitle(f'Concept: {concept_names[j]} at time step 1')
 
@@ -305,7 +350,7 @@ def plot_concept_pred():
                 output, concepts = model(norm_data)
                 concepts_denorm = concept_norm.denormalize(concepts)
                 
-                im = axes[i+1].imshow(concepts_denorm.squeeze()[j, 0, :, :], cmap='viridis', aspect='equal')
+                im = axes[i+1].imshow(concepts_denorm.squeeze()[j, 0, :, :], cmap='viridis', aspect='equal', origin='lower')
                 axes[i+1].set_title(f"Epoch {epoch}")
                 if i+1 == 4:
                     cbar = plt.colorbar(im, ax=axes[i+1], fraction=0.046, pad=0.04)
@@ -313,11 +358,14 @@ def plot_concept_pred():
         plt.savefig(f'{concept_names[j]}_pred_1.png', bbox_inches='tight')
         print(f'saved {concept_names[j]}')
 
-def plot_unet_pred():
+def plot_unet_pred(model_dir=None):
+    print('plotting prediction')
     from models import UNetCBM
     from utils.get_config import config, try_cast
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
+    if model_dir is None:
+        model_dir = find_output_dir()
 
     # Load land mask
     loc = config['DATASET']['location']
@@ -364,20 +412,17 @@ def plot_unet_pred():
 
     print('initialized model')
 
-    model_dir = '/quobyte/maikesgrp/sanah/model_test'
-    epochs_to_check = list(range(0, 100, 5))  # [0, 5, 10, ..., 95]
+    n_epochs = config.getint('TRAINING', 'epochs')
+    n_ckpt = config.getint('OUTPUT', 'n_epochs_between_checkpoints')
+    epochs_to_check = list(range(0, n_epochs, n_ckpt))
     steps_mapping = [1, 3, 6]
 
     # One figure per lead time
+    n_panels = len(epochs_to_check) + 1  # +1 for ground truth
     for time_step in range(3):
         print('starting time step')
-        n_cols = len(epochs_to_check) + 1  # +1 for ground truth
-        n_rows = 4
-        cols_per_row = (n_cols + n_rows - 1) // n_rows  # ceil division
-        fig, axes = plt.subplots(3, 7, figsize=(cols_per_row * 4, n_rows * 3.5), layout='constrained')
-        axes = axes.flatten()
+        fig, axes = plt.subplots(1, n_panels, figsize=(n_panels * 4, 3.5), layout='constrained')
 
-        # Hide unused axes
         for ax in axes:
             ax.axis('off')
 
@@ -385,7 +430,7 @@ def plot_unet_pred():
         gt = target_true[0, 0, time_step, :, :].cpu().numpy()
         gt_masked = np.ma.masked_where(land_mask, gt)
         axes[0].set_facecolor('white')
-        axes[0].imshow(gt_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal')
+        axes[0].imshow(gt_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal', origin='lower')
         axes[0].set_title("Ground Truth")
         axes[0].axis('on')
 
@@ -407,7 +452,7 @@ def plot_unet_pred():
             ax.set_facecolor('white')
             ax.axis('on')
             pred_masked = np.ma.masked_where(land_mask, pred_2d)
-            im = ax.imshow(pred_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal')
+            im = ax.imshow(pred_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal', origin='lower')
             ax.set_title(f"Epoch {epoch}")
 
         # Add shared colorbar
@@ -416,17 +461,19 @@ def plot_unet_pred():
 
         current_step = steps_mapping[time_step]
         target_month = target_dates[current_step]
-        fig.suptitle(f'UNet CBM Predictions: Lead Time {current_step} months (target: {target_month}, opa{member})', fontsize=16)
-        save_name = f'./unet_pred_lead{current_step}.png'
-        fig.savefig(save_name, dpi=300, bbox_inches='tight')
+        fig.suptitle(f'UNet CBM Predictions: Lead Time {current_step} months (target: {target_month}, opa{member})', fontsize=14)
+        save_name = f'{model_dir}/unet_pred_lead{current_step}.png'
+        fig.savefig(save_name, dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f'Saved {save_name}', flush=True)
 
-def plot_unet_concept():
+def plot_unet_concept(model_dir=None):
     from models import UNetCBM
     from utils.get_config import config, try_cast
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
+    if model_dir is None:
+        model_dir = find_output_dir()
     concepts = ['sowsc', 'voep', 'vori', 'von2', 'vos2', 'vohfe']
 
     # Load land mask
@@ -481,21 +528,18 @@ def plot_unet_concept():
     data_gpu = torch.nan_to_num(input_norm.normalize(data), nan=0.0).to(DEVICE)
     # concept_true_denorm = concept_norm.denormalize(concept_true)
 
-    model_dir = '/quobyte/maikesgrp/sanah/model_test'
-    epochs_to_check = list(range(0, 100, 5))  # [0, 5, 10, ..., 95]
+    n_epochs = config.getint('TRAINING', 'epochs')
+    n_ckpt = config.getint('OUTPUT', 'n_epochs_between_checkpoints')
+    epochs_to_check = list(range(0, n_epochs, n_ckpt))
     steps_mapping = [1, 3, 6]
 
     # One figure per lead time per concept
+    n_panels = len(epochs_to_check) + 1  # +1 for ground truth
     for ci in range(len(concepts)):
         for time_step in range(3):
             print(f'starting {concepts[ci]} time step {time_step}', flush=True)
-            n_cols = len(epochs_to_check) + 1  # +1 for ground truth
-            n_rows = 4
-            cols_per_row = (n_cols + n_rows - 1) // n_rows  # ceil division
-            fig, axes = plt.subplots(3, 7, figsize=(cols_per_row * 4, n_rows * 3.5), layout='constrained')
-            axes = axes.flatten()
+            fig, axes = plt.subplots(1, n_panels, figsize=(n_panels * 4, 3.5), layout='constrained')
 
-            # Hide unused axes
             for ax in axes:
                 ax.axis('off')
 
@@ -504,12 +548,9 @@ def plot_unet_concept():
             gt_masked = np.ma.masked_where(land_mask, gt)
             clean_arr = np.ma.filled(gt_masked.astype(float), np.nan)
             vmin, vmax = np.nanpercentile(clean_arr, [2, 98])
-            print('vmin: ', vmin)
-            print('vmax: ', vmax)
-            #breakpoint()
 
             axes[0].set_facecolor('white')
-            axes[0].imshow(gt_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax)
+            axes[0].imshow(gt_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax, origin='lower')
             axes[0].set_title("Ground Truth")
             axes[0].axis('on')
 
@@ -524,7 +565,6 @@ def plot_unet_concept():
 
                 with torch.no_grad():
                     _, concept = model(data_gpu)
-                    #breakpoint()
                     concept_denorm = concept_norm.denormalize(concept.cpu())
                     pred_2d = concept_denorm[0, ci, time_step, :, :].numpy()
 
@@ -532,7 +572,7 @@ def plot_unet_concept():
                 ax.set_facecolor('white')
                 ax.axis('on')
                 pred_masked = np.ma.masked_where(land_mask, pred_2d)
-                im = ax.imshow(pred_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax)
+                im = ax.imshow(pred_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax, origin='lower')
                 ax.set_title(f"Epoch {epoch}")
 
             # Add shared colorbar
@@ -540,13 +580,210 @@ def plot_unet_concept():
 
             current_step = steps_mapping[time_step]
             target_month = target_dates[current_step]
-            fig.suptitle(f'UNet CBM {concepts[ci].upper()} Prediction: Lead Time {current_step} months (target: {target_month}, opa{member})', fontsize=16)
-            save_name = f'/quobyte/maikesgrp/sanah/unet_{concepts[ci]}_lead{current_step}.png'
-            fig.savefig(save_name, dpi=300, bbox_inches='tight')
+            fig.suptitle(f'UNet CBM {concepts[ci].upper()} Prediction: Lead Time {current_step} months (target: {target_month}, opa{member})', fontsize=14)
+            save_name = f'{model_dir}/unet_{concepts[ci]}_lead{current_step}.png'
+            fig.savefig(save_name, dpi=200, bbox_inches='tight')
             plt.close(fig)
             print(f'Saved {save_name}', flush=True)
 
+def eval_gt_concepts(model_dir=None):
+    """Compare prediction using predicted concepts vs ground-truth concepts."""
+    from models import UNetCBM
+    from utils.get_config import config, try_cast
+    from utils.get_data import get_dataset_preload
+    if model_dir is None:
+        model_dir = find_output_dir()
+
+    loc = config['DATASET']['location']
+    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    mask_tensor = torch.tensor(mask_2d, dtype=torch.float32)[None, None, None, :, :]
+
+    input_norm, concept_norm, _, _, val_loader, _ = get_dataset_preload()
+
+    n_concepts = len(try_cast(config['DATASET']['concepts']))
+    output_dim = len(try_cast(config['DATASET']['offset']))
+    out_loss_fn = getattr(torch.nn, config['TRAINING']['out_loss_fn'])()
+
+    model = UNetCBM(
+        n_features=len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
+        n_concepts=n_concepts,
+        output_dim=output_dim,
+    )
+
+    n_epochs = config.getint('TRAINING', 'epochs')
+    n_ckpt = config.getint('OUTPUT', 'n_epochs_between_checkpoints')
+    epochs_to_check = list(range(0, n_epochs, n_ckpt))
+    pred_losses = []
+    gt_losses = []
+
+    for epoch in epochs_to_check:
+        checkpoint_path = f'{model_dir}/unet_epoch{epoch}.pt'
+        if not os.path.exists(checkpoint_path):
+            print(f'Checkpoint not found: {checkpoint_path}', flush=True)
+            continue
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+
+        pred_loss_accum = 0
+        gt_loss_accum = 0
+        n_snaps = 0
+
+        with torch.no_grad():
+            for batch, concept_y, y in val_loader:
+                batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
+                concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
+                y = torch.nan_to_num(y, nan=0.0)
+
+                # Normal forward pass (predicted concepts)
+                pred, _ = model(batch)
+                pred = pred * mask_tensor
+                pred_loss_accum += out_loss_fn(pred, y).item()
+
+                # Ground-truth concepts through output_head
+                B, C, T, Y, X = concept_y.shape
+                gt_flat = concept_y.view(B, C * T, Y, X)  # (B, n_concepts*output_dim, Y, X)
+                gt_output = model.output_head(gt_flat)
+                gt_output = gt_output.unsqueeze(1) * mask_tensor  # (B, 1, output_dim, Y, X)
+                gt_loss_accum += out_loss_fn(gt_output, y).item()
+
+                n_snaps += 1
+
+        pred_losses.append(pred_loss_accum / n_snaps)
+        gt_losses.append(gt_loss_accum / n_snaps)
+        print(f'Epoch {epoch}: pred_concepts={pred_losses[-1]:.5f}, gt_concepts={gt_losses[-1]:.5f}')
+
+    # Plot comparison
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4), layout='constrained')
+    ax.plot(epochs_to_check, pred_losses, 'o-', label='Predicted concepts')
+    ax.plot(epochs_to_check, gt_losses, 's--', label='Ground-truth concepts')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('BCEWithLogitsLoss')
+    ax.set_title('Prediction Loss: Predicted vs Ground-Truth Concepts')
+    ax.legend()
+    save_name = f'{model_dir}/gt_concept_comparison.png'
+    fig.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {save_name}')
+
+
+def plot_concept_timeseries(output_dir=None, member='opa0'):
+    if output_dir is None:
+        output_dir = find_output_dir()
+    """Plot time series of spatial mean/std and distributions for each concept."""
+    from utils.get_config import config, try_cast
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+
+    loc = config['DATASET']['location']
+    concepts = try_cast(config['DATASET']['concepts'])
+    start_date = datetime.strptime(config['DATASET']['start'], "%Y%m")
+    end_date = datetime.strptime(config['DATASET']['end'], "%Y%m")
+
+    # Build date axis
+    dates = []
+    cur = start_date
+    while cur <= end_date:
+        dates.append(cur)
+        cur += relativedelta(months=1)
+
+    # Load land mask
+    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    ocean_mask = (mask_2d == 1)
+
+    # Load each concept and compute stats
+    concept_data = {}
+    for concept in concepts:
+        ds = xr.open_zarr(f'{loc}/{member}/{concept}_na.zarr')
+        ds = ds.rename({'time_counter': 'time'})
+        arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values.squeeze(0)  # (time, y, x)
+        # Mask land
+        arr[:, ~ocean_mask] = np.nan
+        concept_data[concept] = arr
+        print(f'Loaded {concept}: shape={arr.shape}, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
+
+    # Apply transforms: log10 for vori, 98th percentile clip for vohfe, von2, vos2
+    transform_labels = {}
+    if 'vori' in concept_data:
+        arr = concept_data['vori']
+        arr = np.where(arr > 0, arr, np.nan)
+        concept_data['vori'] = np.log10(arr)
+        transform_labels['vori'] = 'log10(vori)'
+        print(f'Transformed vori: log10, range=[{np.nanmin(concept_data["vori"]):.3g}, {np.nanmax(concept_data["vori"]):.3g}]')
+    for name in ['vohfe', 'von2', 'vos2']:
+        if name in concept_data:
+            arr = concept_data[name]
+            p2 = np.nanpercentile(arr, 2)
+            p98 = np.nanpercentile(arr, 98)
+            concept_data[name] = np.clip(arr, p2, p98)
+            transform_labels[name] = f'{name} (clipped [{p2:.3g}, {p98:.3g}])'
+            print(f'Clipped {name} at [2nd, 98th] pct=[{p2:.3g}, {p98:.3g}]')
+
+    n_concepts = len(concepts)
+    n_times = min(len(dates), next(iter(concept_data.values())).shape[0])
+    dates = dates[:n_times]
+
+    # --- Figure 1: Spatial mean time series (each concept gets its own y-axis scale) ---
+    fig, axes = plt.subplots(n_concepts, 1, figsize=(14, 2.5 * n_concepts), sharex=True, layout='constrained')
+    for i, concept in enumerate(concepts):
+        arr = concept_data[concept][:n_times]
+        spatial_mean = np.nanmean(arr, axis=(1, 2))
+        spatial_p5 = np.nanpercentile(arr, 5, axis=(1, 2))
+        spatial_p95 = np.nanpercentile(arr, 95, axis=(1, 2))
+        axes[i].plot(dates, spatial_mean, linewidth=1, label='mean')
+        axes[i].fill_between(dates, spatial_p5, spatial_p95, alpha=0.2, label='5th-95th pct')
+        axes[i].set_ylabel(transform_labels.get(concept, concept))
+        axes[i].legend(loc='upper right', fontsize=7)
+    axes[-1].set_xlabel('Date')
+    fig.suptitle(f'Concept Spatial Mean + Spread Over Time ({member})', fontsize=14)
+    save_name = f'{output_dir}/concept_timeseries_{member}.png'
+    fig.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {save_name}')
+
+    # --- Figure 2: Spatial std time series (all on same plot for comparison) ---
+    fig, ax = plt.subplots(1, 1, figsize=(14, 5), layout='constrained')
+    for concept in concepts:
+        arr = concept_data[concept][:n_times]
+        spatial_std = np.nanstd(arr, axis=(1, 2))
+        ax.plot(dates, spatial_std, linewidth=1, label=concept)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Spatial Std Dev')
+    ax.set_title(f'Concept Spatial Variability Over Time ({member})')
+    ax.legend()
+    save_name = f'{output_dir}/concept_spatial_std_{member}.png'
+    fig.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {save_name}')
+
+    # --- Figure 3: Value distributions (histograms) ---
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8), layout='constrained')
+    axes = axes.flatten()
+    for i, concept in enumerate(concepts):
+        arr = concept_data[concept][:n_times]
+        vals = arr[~np.isnan(arr)].flatten()
+        # Subsample if too many points for histogram
+        if len(vals) > 500000:
+            vals = np.random.choice(vals, 500000, replace=False)
+        axes[i].hist(vals, bins=100, edgecolor='none', alpha=0.8)
+        axes[i].set_title(transform_labels.get(concept, concept))
+        axes[i].set_xlabel('Value')
+        axes[i].set_ylabel('Count')
+        axes[i].axvline(np.mean(vals), color='red', linestyle='--', linewidth=1, label=f'mean={np.mean(vals):.2g}')
+        axes[i].legend(fontsize=7)
+    fig.suptitle(f'Concept Value Distributions ({member})', fontsize=14)
+    save_name = f'{output_dir}/concept_distributions_{member}.png'
+    fig.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {save_name}')
+
+
 if __name__ == "__main__":
 
-    plot_unet_pred()
-    plot_unet_concept()
+    # eval_gt_concepts()
+    #plot_unet_pred()
+    #plot_unet_concept()
+    #plot_detailed_losses()
+    plot_concept_timeseries()

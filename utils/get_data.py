@@ -36,6 +36,7 @@ def get_dataset():
     dataset = EmulatorDataset()
     print('dataset initialized', flush=True)
     n = len(dataset)
+    print(f'dataset length: {n}', flush=True)
     n_members = len(try_cast(config['DATASET']['members']))
     n_times = n // n_members
 
@@ -88,8 +89,10 @@ def get_dataset_preload():
     start_time = time.time()
     dataset = EmulatorDataset()
     print('dataset initialized', flush=True)
+    n = len(dataset)
+    print(f'dataset length: {n}', flush=True)
 
-    # Load all zarr data into memory so __getitem__ is just numpy slicing
+    # Load zarr data and extract numpy arrays for fast __getitem__
     for feat in dataset.features:
         dataset.lazy_data[feat].load()
         print(f'loaded feature {feat}', flush=True)
@@ -99,7 +102,8 @@ def get_dataset_preload():
     for label in dataset.labels:
         dataset.lazy_labels[label].load()
         print(f'loaded label {label}', flush=True)
-    print('all zarr data loaded into memory', flush=True)
+    dataset.materialize()
+    print('all data materialized into numpy arrays', flush=True)
 
     # Split by time steps so no month appears in multiple sets
     n = len(dataset)
@@ -140,9 +144,9 @@ def get_dataset_preload():
     print('normalization stats computed', flush=True)
 
     batch_size = config.getint('DATASET', 'batch_size')
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
     end_time = time.time()
     print(f'done in {end_time - start_time}', flush=True)
 

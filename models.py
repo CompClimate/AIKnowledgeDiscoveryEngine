@@ -72,12 +72,12 @@ class PointwiseNoCBM(nn.Module):
         return output, concepts
 
 class Encoder(nn.Module):
-    def __init__(self, in_channels, out_channels_list):
+    def __init__(self, in_channels, out_channels_list, dropout=0.2):
         super().__init__()
         self.conv_layers = nn.ModuleList()
         self.pool_layers = nn.ModuleList()
         channels = [in_channels] + out_channels_list
- 
+
         for i in range(len(out_channels_list)):
             in_ch = channels[i]
             out_ch = channels[i + 1]
@@ -86,6 +86,7 @@ class Encoder(nn.Module):
                     nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
+                    nn.Dropout2d(dropout),
                 )
             )
             self.pool_layers.append(nn.MaxPool2d(2, 2))
@@ -100,7 +101,7 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, in_channels, out_channels_list, encoder_channels_list):
+    def __init__(self, in_channels, out_channels_list, encoder_channels_list, dropout=0.2):
         super().__init__()
         self.upconv_layers = nn.ModuleList()
         self.conv_layers = nn.ModuleList()
@@ -111,7 +112,7 @@ class Decoder(nn.Module):
             out_ch = channels[i + 1]
             skip_ch = encoder_channels_list[-(i + 1)]
 
-            # upsampling 
+            # upsampling
             self.upconv_layers.append(nn.ConvTranspose2d(in_ch, out_ch, 2, 2))
 
             self.conv_layers.append(
@@ -119,6 +120,7 @@ class Decoder(nn.Module):
                     nn.Conv2d(out_ch + skip_ch, out_ch, 3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
+                    nn.Dropout2d(dropout),
                 )
             )
 
@@ -136,7 +138,7 @@ class Decoder(nn.Module):
 
 
 class UNetCBM(nn.Module):
-    def __init__(self, n_features, n_concepts, output_dim, channels_list=[64, 128, 256, 512]):
+    def __init__(self, n_features, n_concepts, output_dim, channels_list=[32, 64, 128, 256]):
         super().__init__()
         self.n_features = n_features  # This is actually T*V in PointwiseCBM
         self.n_concepts = n_concepts

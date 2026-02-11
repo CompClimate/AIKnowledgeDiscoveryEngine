@@ -10,6 +10,7 @@ from utils.get_config import parse_section, config, try_cast
 import utils.get_config as get_config
 import xarray as xr
 import os
+import shutil
 
 loc = config['DATASET']['location']
 mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
@@ -19,6 +20,30 @@ mask = torch.tensor(mask, dtype=torch.float32)[None, None, None, :, :]
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 mask = mask.to(DEVICE)  
+
+def make_output_dir():
+    """Build output directory name from config and ensure it doesn't overwrite."""
+    base = '/quobyte/maikesgrp/sanah/models'
+    lam = config.getfloat('TRAINING', 'concept_lambda')
+    ep = config.getint('TRAINING', 'epochs')
+    lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
+    bs = config.getint('DATASET', 'batch_size')
+    loss = config['TRAINING']['out_loss_fn']
+    name = f"lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}"
+    output = f"{base}/{name}"
+    # Append version number if directory already exists
+    if os.path.exists(output):
+        v = 2
+        while os.path.exists(f"{output}_v{v}"):
+            v += 1
+        output = f"{output}_v{v}"
+    os.makedirs(output, exist_ok=True)
+    # Save a copy of config.ini for reproducibility
+    config_src = os.path.join(os.path.expanduser("~"), 'AIKnowledgeDiscoveryEngine/utils/config.ini')
+    if os.path.exists(config_src):
+        shutil.copy2(config_src, f"{output}/config.ini")
+    print(f'Output directory: {output}', flush=True)
+    return output
 
 def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     # Training loop
@@ -39,6 +64,8 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     optimizer = get_config.get_optimizer(model)
     scheduler = get_config.get_scheduler(optimizer)
     scheduler_name = config['SCHEDULER']['type']   
+
+    output = make_output_dir()
 
     #allow for restart?
     start_epoch = 0
@@ -125,8 +152,6 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             else:
                 # Step the scheduler every epoch (for schedulers like StepLR)
                 scheduler.step()
-        #output = config['OUTPUT']['dir']
-        output = '/quobyte/maikesgrp/sanah/models' 
         if epoch % 5 == 0:
             print(f"epoch: {epoch}; loss: {loss_mean:.5f}; val_loss: {val_loss_mean:.5f}")
             print(f"learning rate: {optimizer.param_groups[0]['lr']}")
