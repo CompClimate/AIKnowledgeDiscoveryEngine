@@ -905,10 +905,152 @@ def plot_concept_timeseries(output_dir=None, member='opa0'):
     print(f'Saved {save_name}')
 
 
+def plot_concept_importance(model_dir=None):
+    """Analyze which concepts and inputs matter most for prediction."""
+    from models import UNetCBM
+    from utils.get_config import config, try_cast
+    from utils.get_data import get_dataset_preload
+
+    if model_dir is None:
+        model_dir = find_output_dir()
+
+    concept_names = try_cast(config['DATASET']['concepts'])
+    feature_names = try_cast(config['DATASET']['features'])
+    n_concepts = len(concept_names)
+    n_features = len(feature_names)
+    output_dim = len(try_cast(config['DATASET']['offset']))
+    n_free = config.getint('MODEL', 'n_free_concepts', fallback=0)
+    window = config.getint('DATASET', 'context_window')
+
+    model = UNetCBM(
+        n_features=n_features * window,
+        n_concepts=n_concepts,
+        output_dim=output_dim,
+        n_free_concepts=n_free,
+    )
+
+    n_epochs = config.getint('TRAINING', 'epochs')
+    n_ckpt = config.getint('OUTPUT', 'n_epochs_between_checkpoints')
+    epochs_to_check = list(range(0, n_epochs, n_ckpt))
+
+    # --- Panel 1: Output head weight magnitude per concept across epochs ---
+    weight_importance = {name: [] for name in concept_names}
+    if n_free > 0:
+        for fi in range(n_free):
+            weight_importance[f'free_{fi}'] = []
+
+    for epoch in epochs_to_check:
+        checkpoint_path = f'{model_dir}/unet_epoch{epoch}.pt'
+        if not os.path.exists(checkpoint_path):
+            continue
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+
+        # output_head[0] is Conv2d((n_concepts+n_free)*output_dim, 64, 3, 3)
+        w = model.output_head[0].weight.data  # (64, (n_concepts+n_free)*output_dim, 3, 3)
+        for ci, name in enumerate(concept_names):
+            # Each concept owns output_dim channels
+            start = ci * output_dim
+            end = start + output_dim
+            weight_importance[name].append(w[:, start:end, :, :].norm().item())
+        for fi in range(n_free):
+            start = (n_concepts + fi) * output_dim
+            end = start + output_dim
+            weight_importance[f'free_{fi}'].append(w[:, start:end, :, :].norm().item())
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5), layout='constrained')
+    for name, vals in weight_importance.items():
+        style = '--' if name.startswith('free') else '-'
+        ax.plot(epochs_to_check[:len(vals)], vals, style, label=name, linewidth=2)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('L2 Norm of Output Head Weights')
+    ax.set_title('Concept Importance (Weight Magnitude)')
+    ax.legend()
+    save_name = f'{model_dir}/concept_weight_importance.png'
+    fig.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {save_name}')
+
+    # --- Panel 2: Gradient-based sensitivity on validation data ---
+    input_norm, concept_norm, _, _, val_loader, _ = get_dataset_preload()
+
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Use the last checkpoint
+    last_epoch = epochs_to_check[-1]
+    checkpoint_path = f'{model_dir}/unet_epoch{last_epoch}.pt'
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(DEVICE)
+    model.eval()
+
+    # Load land mask for masking
+    loc = config['DATASET']['location']
+    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    mask_tensor = torch.tensor(mask_2d, dtype=torch.float32)[None, None, None, :, :].to(DEVICE)
+
+    concept_grad_accum = np.zeros(n_concepts)
+    input_grad_accum = np.zeros(n_features)
+    n_samples = 0
+
+    for batch, concept_y, y in val_loader:
+        batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
+        batch.requires_grad_(True)
+
+        pred, concepts_pred, _ = model(batch)
+        pred = pred * mask_tensor
+
+        # Gradient of prediction w.r.t. concepts
+        # concepts_pred: (B, n_concepts, output_dim, Y, X)
+        concepts_pred.retain_grad()
+        loss = pred.sum()
+        loss.backward()
+
+        # Concept sensitivity: mean |grad| per concept
+        if concepts_pred.grad is not None:
+            cg = concepts_pred.grad.abs().mean(dim=(0, 2, 3, 4)).cpu().numpy()  # (n_concepts,)
+            concept_grad_accum += cg
+
+        # Input sensitivity: mean |grad| per feature
+        # batch: (B, n_features, window, Y, X)
+        if batch.grad is not None:
+            ig = batch.grad.abs().mean(dim=(0, 2, 3, 4)).cpu().numpy()  # (n_features,)
+            input_grad_accum += ig
+
+        n_samples += 1
+        model.zero_grad()
+        if n_samples >= 10:  # enough samples for stable estimate
+            break
+
+    concept_grad_accum /= n_samples
+    input_grad_accum /= n_samples
+
+    # Bar chart: concepts and inputs side by side
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), layout='constrained')
+
+    ax1.bar(concept_names, concept_grad_accum, color='steelblue')
+    ax1.set_ylabel('Mean |gradient|')
+    ax1.set_title(f'Concept Sensitivity (epoch {last_epoch})')
+    ax1.tick_params(axis='x', rotation=45)
+
+    ax2.bar(feature_names, input_grad_accum, color='coral')
+    ax2.set_ylabel('Mean |gradient|')
+    ax2.set_title(f'Input Feature Sensitivity (epoch {last_epoch})')
+    ax2.tick_params(axis='x', rotation=45)
+
+    save_name = f'{model_dir}/sensitivity_analysis.png'
+    fig.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {save_name}')
+
+
 if __name__ == "__main__":
 
     # eval_gt_concepts()
     #plot_unet_pred()
     #plot_unet_concept()
     #plot_detailed_losses()
-    plot_concept_timeseries()
+    #plot_concept_timeseries()
+    plot_free_concept()
+    plot_concept_importance()
