@@ -138,10 +138,11 @@ class Decoder(nn.Module):
 
 
 class UNetCBM(nn.Module):
-    def __init__(self, n_features, n_concepts, output_dim, channels_list=[32, 64, 128, 256]):
+    def __init__(self, n_features, n_concepts, output_dim, n_free_concepts=0, channels_list=[32, 64, 128, 256]):
         super().__init__()
         self.n_features = n_features  # This is actually T*V in PointwiseCBM
         self.n_concepts = n_concepts
+        self.n_free_concepts = n_free_concepts
         self.output_dim = output_dim
 
         # Encoder takes n_features as input (which is T*V concatenated)
@@ -159,12 +160,17 @@ class UNetCBM(nn.Module):
         decoder_channels = [channels_list[-1]] + channels_list[::-1]
         self.decoder = Decoder(decoder_channels[0], decoder_channels[1:], channels_list)
 
-        # Concept prediction head
+        # Supervised concept prediction head
         self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Output head 
+        # Free (unsupervised) concept head
+        if n_free_concepts > 0:
+            self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
+
+        # Output head takes both supervised and free concepts
+        total_concept_channels = (n_concepts + n_free_concepts) * output_dim
         self.output_head = nn.Sequential(
-            nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
+            nn.Conv2d(total_concept_channels, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 32, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
@@ -195,24 +201,35 @@ class UNetCBM(nn.Module):
         x = self.bottleneck(x)
         x = self.decoder(x, skips)
 
-        # Concept predictions
+        # Supervised concept predictions
         concepts = self.concept_head(x)  # (B, n_concepts*output_dim, Y, X)
 
-        # Final output using concept maps
-        output = self.output_head(concepts)  # (B, output_dim, Y, X)
+        # Free concept predictions
+        if self.n_free_concepts > 0:
+            free = self.free_concept_head(x)  # (B, n_free*output_dim, Y, X)
+            all_concepts = torch.cat([concepts, free], dim=1)
+        else:
+            all_concepts = concepts
+            free = None
+
+        # Final output using all concept maps
+        output = self.output_head(all_concepts)  # (B, output_dim, Y, X)
 
         # Crop to original spatial dimensions
         concepts = concepts[:, :, :Y, :X]
         output = output[:, :, :Y, :X]
 
-        # Reshape to match PointwiseCBM output format
-        # concepts: (B, n_concepts*output_dim, Y, X) -> (B, n_concepts, output_dim, Y, X)
+        # Reshape supervised concepts
         concepts = concepts.view(B, self.n_concepts, self.output_dim, Y, X)
-        
-        # output: (B, output_dim, Y, X) -> (B, 1, output_dim, Y, X) to match PointwiseCBM
+
         output = output.unsqueeze(1)  # (B, 1, output_dim, Y, X)
-        
-        return output, concepts
+
+        # Reshape free concepts if present
+        if free is not None:
+            free = free[:, :, :Y, :X]
+            free = free.view(B, self.n_free_concepts, self.output_dim, Y, X)
+
+        return output, concepts, free
 
 def test_models_match():
     """Test if PointwiseCBM and UNetCBM produce similar outputs"""

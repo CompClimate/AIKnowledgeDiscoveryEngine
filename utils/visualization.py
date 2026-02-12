@@ -404,10 +404,12 @@ def plot_unet_pred(model_dir=None):
     print('set up validation')
 
     # Build UNetCBM with same config as training
+    n_free = config.getint('MODEL', 'n_free_concepts', fallback=0)
     model = UNetCBM(
         n_features=len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
         n_concepts=len(try_cast(config['DATASET']['concepts'])),
-        output_dim=len(try_cast(config['DATASET']['offset']))
+        output_dim=len(try_cast(config['DATASET']['offset'])),
+        n_free_concepts=n_free,
     )
 
     print('initialized model')
@@ -445,7 +447,7 @@ def plot_unet_pred(model_dir=None):
 
             with torch.no_grad():
                 norm_data = input_norm.normalize(data)
-                output, _ = model(torch.nan_to_num(norm_data, nan=0.0))
+                output, _, _ = model(torch.nan_to_num(norm_data, nan=0.0))
                 pred_2d = torch.sigmoid(output[0, 0, time_step, :, :]).cpu().numpy()
 
             ax = axes[i + 1]
@@ -515,10 +517,12 @@ def plot_unet_concept(model_dir=None):
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Build UNetCBM with same config as training
+    n_free = config.getint('MODEL', 'n_free_concepts', fallback=0)
     model = UNetCBM(
         n_features=len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
         n_concepts=len(try_cast(config['DATASET']['concepts'])),
-        output_dim=len(try_cast(config['DATASET']['offset']))
+        output_dim=len(try_cast(config['DATASET']['offset'])),
+        n_free_concepts=n_free,
     )
     model.to(DEVICE)
 
@@ -564,7 +568,7 @@ def plot_unet_concept(model_dir=None):
                 model.eval()
 
                 with torch.no_grad():
-                    _, concept = model(data_gpu)
+                    _, concept, _ = model(data_gpu)
                     concept_denorm = concept_norm.denormalize(concept.cpu())
                     pred_2d = concept_denorm[0, ci, time_step, :, :].numpy()
 
@@ -586,6 +590,119 @@ def plot_unet_concept(model_dir=None):
             plt.close(fig)
             print(f'Saved {save_name}', flush=True)
 
+def plot_free_concept(model_dir=None):
+    """Visualize free (unsupervised) concept spatial maps across epochs."""
+    from models import UNetCBM
+    from utils.get_config import config, try_cast
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+    if model_dir is None:
+        model_dir = find_output_dir()
+
+    n_free = config.getint('MODEL', 'n_free_concepts', fallback=0)
+    if n_free == 0:
+        print('No free concepts configured, skipping.')
+        return
+
+    # Load land mask
+    loc = config['DATASET']['location']
+    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    land_mask = (mask_2d == 0)
+
+    # Setup validation set
+    from utils.get_data import get_dataset_preload
+    input_norm, concept_norm, _, _, val_loader, _ = get_dataset_preload()
+    data, concept_true, target_true = next(iter(val_loader))
+    val_sample_idx = 1
+    data = data[val_sample_idx:val_sample_idx+1]
+
+    # Compute target date
+    window = config.getint('DATASET', 'context_window')
+    offsets = try_cast(config['DATASET']['offset'])
+    n_members = len(try_cast(config['DATASET']['members']))
+    start_date = datetime.strptime(config['DATASET']['start'], "%Y%m")
+    end_date = datetime.strptime(config['DATASET']['end'], "%Y%m")
+    dates = []
+    cur = start_date
+    while cur <= end_date:
+        dates.append(cur.strftime("%Y%m"))
+        cur += relativedelta(months=1)
+    n_times = len(dates) - window - max(offsets) + 1
+    train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)
+    train_end = train_time_end * n_members
+    original_idx = train_end + val_sample_idx
+    member = original_idx % n_members
+    time_idx = original_idx // n_members
+    target_dates = {off: dates[time_idx + window - 1 + off] for off in offsets}
+
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model = UNetCBM(
+        n_features=len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
+        n_concepts=len(try_cast(config['DATASET']['concepts'])),
+        output_dim=len(try_cast(config['DATASET']['offset'])),
+        n_free_concepts=n_free,
+    )
+    model.to(DEVICE)
+
+    data_gpu = torch.nan_to_num(input_norm.normalize(data), nan=0.0).to(DEVICE)
+
+    n_epochs = config.getint('TRAINING', 'epochs')
+    n_ckpt = config.getint('OUTPUT', 'n_epochs_between_checkpoints')
+    epochs_to_check = list(range(0, n_epochs, n_ckpt))
+    steps_mapping = [1, 3, 6]
+
+    for fi in range(n_free):
+        for time_step in range(3):
+            print(f'starting free concept {fi} time step {time_step}', flush=True)
+            n_panels = len(epochs_to_check)
+            fig, axes = plt.subplots(1, n_panels, figsize=(n_panels * 4, 3.5), layout='constrained')
+            if n_panels == 1:
+                axes = [axes]
+
+            for ax in axes:
+                ax.axis('off')
+
+            # Collect predictions to set consistent colorscale
+            preds = []
+            for ei, epoch in enumerate(epochs_to_check):
+                checkpoint_path = f'{model_dir}/unet_epoch{epoch}.pt'
+                if not os.path.exists(checkpoint_path):
+                    print(f'Checkpoint not found: {checkpoint_path}', flush=True)
+                    continue
+                checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+                model.load_state_dict(checkpoint['model_state_dict'])
+                model.eval()
+
+                with torch.no_grad():
+                    _, _, free = model(data_gpu)
+                    pred_2d = free[0, fi, time_step, :, :].cpu().numpy()
+                preds.append((ei, epoch, pred_2d))
+
+            # Compute shared colorscale from all epochs
+            all_vals = np.concatenate([np.ma.filled(np.ma.masked_where(land_mask, p[2]).astype(float), np.nan).ravel() for p in preds])
+            vmin, vmax = np.nanpercentile(all_vals, [2, 98])
+
+            for ei, epoch, pred_2d in preds:
+                ax = axes[ei]
+                ax.set_facecolor('white')
+                ax.axis('on')
+                pred_masked = np.ma.masked_where(land_mask, pred_2d)
+                im = ax.imshow(pred_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax, origin='lower')
+                ax.set_title(f"Epoch {epoch}")
+
+            cbar = fig.colorbar(im, ax=list(axes), fraction=0.02, pad=0.02)
+
+            current_step = steps_mapping[time_step]
+            target_month = target_dates[current_step]
+            fig.suptitle(f'Free Concept {fi}: Lead Time {current_step} months (target: {target_month}, opa{member})', fontsize=14)
+            save_name = f'{model_dir}/unet_free{fi}_lead{current_step}.png'
+            fig.savefig(save_name, dpi=200, bbox_inches='tight')
+            plt.close(fig)
+            print(f'Saved {save_name}', flush=True)
+
+
 def eval_gt_concepts(model_dir=None):
     """Compare prediction using predicted concepts vs ground-truth concepts."""
     from models import UNetCBM
@@ -603,12 +720,14 @@ def eval_gt_concepts(model_dir=None):
 
     n_concepts = len(try_cast(config['DATASET']['concepts']))
     output_dim = len(try_cast(config['DATASET']['offset']))
+    n_free = config.getint('MODEL', 'n_free_concepts', fallback=0)
     out_loss_fn = getattr(torch.nn, config['TRAINING']['out_loss_fn'])()
 
     model = UNetCBM(
         n_features=len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
         n_concepts=n_concepts,
         output_dim=output_dim,
+        n_free_concepts=n_free,
     )
 
     n_epochs = config.getint('TRAINING', 'epochs')
@@ -637,13 +756,19 @@ def eval_gt_concepts(model_dir=None):
                 y = torch.nan_to_num(y, nan=0.0)
 
                 # Normal forward pass (predicted concepts)
-                pred, _ = model(batch)
+                pred, _, _ = model(batch)
                 pred = pred * mask_tensor
                 pred_loss_accum += out_loss_fn(pred, y).item()
 
                 # Ground-truth concepts through output_head
+                # Need to include free concepts (from model) alongside GT supervised concepts
                 B, C, T, Y, X = concept_y.shape
                 gt_flat = concept_y.view(B, C * T, Y, X)  # (B, n_concepts*output_dim, Y, X)
+                if n_free > 0:
+                    # Run encoder/decoder to get free concepts
+                    _, _, free_pred = model(batch)
+                    free_flat = free_pred.view(B, n_free * T, Y, X)
+                    gt_flat = torch.cat([gt_flat, free_flat], dim=1)
                 gt_output = model.output_head(gt_flat)
                 gt_output = gt_output.unsqueeze(1) * mask_tensor  # (B, 1, output_dim, Y, X)
                 gt_loss_accum += out_loss_fn(gt_output, y).item()

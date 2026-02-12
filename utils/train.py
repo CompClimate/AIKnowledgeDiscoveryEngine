@@ -57,9 +57,11 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     #model_type = config['MODEL']['type']
     model_type = 'unet'
     #model = get_config.get_model()
+    n_free = config.getint('MODEL', 'n_free_concepts', fallback=0)
     model = UNetCBM(n_features=len(try_cast(config['DATASET']['features']))*config.getint('DATASET', 'context_window'),
         n_concepts=len(try_cast(config['DATASET']['concepts'])),
-        output_dim=len(try_cast(config['DATASET']['offset'])))
+        output_dim=len(try_cast(config['DATASET']['offset'])),
+        n_free_concepts=n_free)
     model.to(DEVICE)
     optimizer = get_config.get_optimizer(model)
     scheduler = get_config.get_scheduler(optimizer)
@@ -94,7 +96,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             y = torch.nan_to_num(y, nan=0.0)
             batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
-            pred, concept_pred = model(batch)
+            pred, concept_pred, _ = model(batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
             pred_loss = out_loss_fn(pred, y)
@@ -132,7 +134,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 val_y = torch.nan_to_num(val_y, nan=0.0)
                 val_batch, val_concept_y, val_y = val_batch.to(DEVICE), val_concept_y.to(DEVICE), val_y.to(DEVICE)
 
-                pred, concept_pred = model(val_batch)
+                pred, concept_pred, _ = model(val_batch)
                 pred = pred*mask
                 concept_pred = concept_pred*mask
 
@@ -192,7 +194,7 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             y = torch.nan_to_num(y, nan=0.0)
             test_batch, concept_y, y = test_batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
-            pred, concept_pred = model(test_batch)
+            pred, concept_pred, _ = model(test_batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
             test_loss += ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))     
