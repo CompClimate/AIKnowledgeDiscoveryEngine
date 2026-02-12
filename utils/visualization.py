@@ -721,6 +721,22 @@ def plot_concept_timeseries(output_dir=None, member='opa0'):
             transform_labels[name] = f'{name} (clipped [{p2:.3g}, {p98:.3g}])'
             print(f'Clipped {name} at [2nd, 98th] pct=[{p2:.3g}, {p98:.3g}]')
 
+    # Gaussian smoothing
+    from scipy.ndimage import gaussian_filter
+    smooth_concepts = try_cast(config.get('DATASET', 'smooth_concepts', fallback='[]'))
+    smooth_sigma = config.getfloat('DATASET', 'smooth_sigma', fallback=0)
+    for name in smooth_concepts:
+        if name in concept_data and smooth_sigma > 0:
+            arr = concept_data[name]
+            for t in range(arr.shape[0]):
+                nan_mask = np.isnan(arr[t])
+                arr[t][nan_mask] = 0.0
+                arr[t] = gaussian_filter(arr[t], sigma=smooth_sigma)
+                arr[t][nan_mask] = np.nan
+            label = transform_labels.get(name, name)
+            transform_labels[name] = f'{label} (smooth σ={smooth_sigma})'
+            print(f'Smoothed {name} with sigma={smooth_sigma}')
+
     n_concepts = len(concepts)
     n_times = min(len(dates), next(iter(concept_data.values())).shape[0])
     dates = dates[:n_times]
@@ -783,7 +799,7 @@ def plot_concept_timeseries(output_dir=None, member='opa0'):
 if __name__ == "__main__":
 
     # eval_gt_concepts()
-    #plot_unet_pred()
-    #plot_unet_concept()
+    plot_unet_pred()
+    plot_unet_concept()
     #plot_detailed_losses()
-    plot_concept_timeseries()
+    #plot_concept_timeseries()
