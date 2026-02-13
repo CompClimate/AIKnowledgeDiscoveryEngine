@@ -4,30 +4,13 @@ import torch
 import os
 import xarray as xr
 import numpy as np
-
-# 1. Import get_config
-import utils.get_config as get_config
-
-# 2. Define path and FORCE the read immediately
-home_dir = os.path.expanduser("~")
-config_path = os.path.join(home_dir, 'AIKnowledgeDiscoveryEngine/utils/config.ini')
-
-if os.path.exists(config_path):
-    get_config.config.read(config_path)
-    print(f"Config loaded successfully from {config_path}", flush=True)
-else:
-    print(f"ERROR: Config not found at {config_path}", flush=True)
-
-# 3. NOW import the dataset (it will now see the populated config)
-from utils.load_data import EmulatorDataset
-from torch.utils.data import Subset, DataLoader
 import glob
-
+# from utils.get_config import config, try_cast
+from get_config import config, try_cast
 
 def find_output_dir():
     """Find the latest output directory matching the current config."""
-    config = get_config.config
-    base = '/quobyte/maikesgrp/sanah/models'
+    base = config['OUTPUT']['dir']
     lam = config.getfloat('TRAINING', 'concept_lambda')
     ep = config.getint('TRAINING', 'epochs')
     lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
@@ -44,83 +27,136 @@ def find_output_dir():
     return result
 
 
-def visualize(train_losses, val_losses, plot_test):
-    #plot_test = config['VISUALIZATION']['plot_test']
-    if plot_test:
-        n_panels = 2 #4
-    else:
-        n_panels = 2 #3
-    fig, ax = plt.subplots(1, n_panels, figsize=(9/4 * n_panels, 8/3), layout='constrained')
-    ax[0].semilogy(train_losses, 'tab:blue', label="train")
-    ax[0].semilogy(val_losses, 'tab:orange', label="val")
-    ax[0].set_xlabel("epoch")
-    ax[0].set_ylabel("loss (MSE)")
-    ax[0].legend()
-    ax[0].annotate(f"train: {train_losses[-1]:0.2e}" + "\n" +
-                       f"val: {val_losses[-1]:0.2e}",
-                       xy=(0.2, .75),
-                       xycoords='axes fraction')
-    output = get_config.config['OUTPUT']['dir']
-    fig.savefig(f'{output}/viz.png', dpi=400)
-
-
-def plot_detailed_losses(losses_path=None, output_dir=None):
+def visualize():
+    output_dir = None
+    losses_path = None      #TODO remove
     if output_dir is None:
         output_dir = find_output_dir()
     if losses_path is None:
         losses_path = f'{output_dir}/detailed_losses.pt'
+    
     data = torch.load(losses_path, weights_only=False)
+    train_loss = data['loss']
+    val_loss = data['val_loss']
     train_pred = data['train_pred']
     val_pred = data['val_pred']
+    train_concept = data['concept_loss']
+    val_concept = data['val_concept_loss']
     train_per_concept = data['train_per_concept']
     val_per_concept = data['val_per_concept']
     concept_names = list(train_per_concept.keys())
 
-    # Compute combined loss: (1 - lambda) * pred + lambda * mean(concept losses)
-    from utils.get_config import config
-    concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
-    n_epochs = len(train_pred)
-    train_combined = []
-    val_combined = []
-    for e in range(n_epochs):
-        train_concept_mean = sum(train_per_concept[name][e] for name in concept_names) / len(concept_names)
-        val_concept_mean = sum(val_per_concept[name][e] for name in concept_names) / len(concept_names)
-        train_combined.append((1 - concept_lambda) * train_pred[e] + concept_lambda * train_concept_mean)
-        val_combined.append((1 - concept_lambda) * val_pred[e] + concept_lambda * val_concept_mean)
-
-    # Panel 1: combined loss, Panel 2: prediction loss, Panel 3: per-concept losses
-    fig, ax = plt.subplots(1, 3, figsize=(18, 5), layout='constrained')
-
-    # Combined loss
-    ax[0].semilogy(train_combined, label='train')
-    ax[0].semilogy(val_combined, label='val')
-    ax[0].set_xlabel('Epoch')
-    ax[0].set_ylabel('Loss')
-    ax[0].set_title(f'Combined Loss (lambda={concept_lambda})')
+    plot_test = config['VISUALIZATION']['plot_test']
+    if plot_test:
+        n_panels = 4
+    else:
+        n_panels = 3
+    print(val_loss)
+    fig, ax = plt.subplots(1, n_panels, figsize=(9/4 * n_panels, 8/3), layout='constrained')
+    ax[0].semilogy(train_loss, 'tab:blue', label="train")
+    ax[0].semilogy(val_loss, 'tab:orange', label="val")
+    ax[0].set_xlabel("epoch")
+    ax[0].set_ylabel("loss (combined)")
     ax[0].legend()
+    ax[0].annotate(f"train: {train_loss[-1]:0.2e}" + "\n" +
+                       f"val: {val_loss[-1]:0.2e}",
+                       xy=(0.2, .75),
+                       xycoords='axes fraction')
 
-    # Prediction loss
-    ax[1].semilogy(train_pred, label='train')
-    ax[1].semilogy(val_pred, label='val')
-    ax[1].set_xlabel('Epoch')
-    ax[1].set_ylabel('BCEWithLogitsLoss')
-    ax[1].set_title('Prediction Loss')
+    ax[1].semilogy(train_pred, 'tab:blue', label="train")
+    ax[1].semilogy(val_pred, 'tab:orange', label="val")
+    ax[1].set_xlabel("epoch")
+    ax[1].set_ylabel("loss (MSE)")
+    ax[1].set_title('Pred Loss')
     ax[1].legend()
+    ax[1].annotate(f"train: {train_pred[-1]:0.2e}" + "\n" +
+                       f"val: {val_pred[-1]:0.2e}",
+                       xy=(0.2, .75),
+                       xycoords='axes fraction')  
+
+    ax[2].semilogy(train_concept, 'tab:blue', label="train")
+    ax[2].semilogy(val_concept, 'tab:orange', label="val")
+    ax[2].set_xlabel("epoch")
+    ax[2].set_ylabel("loss (MSE)")
+    ax[2].set_title('Concept Loss (MSE)')
+    ax[2].legend()
+    ax[2].annotate(f"train: {train_concept[-1]:0.2e}" + "\n" +
+                       f"val: {val_concept[-1]:0.2e}",
+                       xy=(0.2, .75),
+                       xycoords='axes fraction')  
 
     # Per-concept losses (same colour per concept, solid=train, dashed=val)
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     for i, name in enumerate(concept_names):
         c = colors[i % len(colors)]
-        ax[2].semilogy(train_per_concept[name], color=c, linestyle='-', label=f'{name} (train)')
-        ax[2].semilogy(val_per_concept[name], color=c, linestyle='--', label=f'{name} (val)')
-    ax[2].set_xlabel('Epoch')
-    ax[2].set_ylabel('MSELoss')
-    ax[2].set_title('Per-Concept Loss')
-    ax[2].legend(fontsize=7, ncol=2)
-
-    fig.savefig(f'{output_dir}/detailed_losses.png', dpi=300)
+        ax[3].semilogy(train_per_concept[name], color=c, linestyle='-', label=f'{name} (train)')
+        ax[3].semilogy(val_per_concept[name], color=c, linestyle='--', label=f'{name} (val)')
+    ax[3].set_xlabel('Epoch')
+    ax[3].set_ylabel('MSELoss')
+    ax[3].set_title('Per-Concept Loss')
+    ax[3].legend(fontsize=7, ncol=2)            
+    
+    fig.savefig(f'{output_dir}/losses.png', dpi=400)
     plt.close(fig)
-    print(f'Saved {output_dir}/detailed_losses.png')
+
+
+# def plot_detailed_losses(losses_path=None, output_dir=None):
+#     if output_dir is None:
+#         output_dir = find_output_dir()
+#     if losses_path is None:
+#         losses_path = f'{output_dir}/detailed_losses.pt'
+#     data = torch.load(losses_path, weights_only=False)
+#     train_pred = data['train_pred']
+#     val_pred = data['val_pred']
+#     train_per_concept = data['train_per_concept']
+#     val_per_concept = data['val_per_concept']
+#     concept_names = list(train_per_concept.keys())
+
+#     # Compute combined loss: (1 - lambda) * pred + lambda * mean(concept losses)
+#     from utils.get_config import config
+#     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
+#     n_epochs = len(train_pred)
+#     train_combined = []
+#     val_combined = []
+#     for e in range(n_epochs):
+#         train_concept_mean = sum(train_per_concept[name][e] for name in concept_names) / len(concept_names)
+#         val_concept_mean = sum(val_per_concept[name][e] for name in concept_names) / len(concept_names)
+#         train_combined.append((1 - concept_lambda) * train_pred[e] + concept_lambda * train_concept_mean)
+#         val_combined.append((1 - concept_lambda) * val_pred[e] + concept_lambda * val_concept_mean)
+
+#     # Panel 1: combined loss, Panel 2: prediction loss, Panel 3: per-concept losses
+#     fig, ax = plt.subplots(1, 3, figsize=(18, 5), layout='constrained')
+
+#     # Combined loss
+#     ax[0].semilogy(train_combined, label='train')
+#     ax[0].semilogy(val_combined, label='val')
+#     ax[0].set_xlabel('Epoch')
+#     ax[0].set_ylabel('Loss')
+#     ax[0].set_title(f'Combined Loss (lambda={concept_lambda})')
+#     ax[0].legend()
+
+#     # Prediction loss
+#     ax[1].semilogy(train_pred, label='train')
+#     ax[1].semilogy(val_pred, label='val')
+#     ax[1].set_xlabel('Epoch')
+#     ax[1].set_ylabel('BCEWithLogitsLoss')
+#     ax[1].set_title('Prediction Loss')
+#     ax[1].legend()
+
+#     # Per-concept losses (same colour per concept, solid=train, dashed=val)
+#     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+#     for i, name in enumerate(concept_names):
+#         c = colors[i % len(colors)]
+#         ax[2].semilogy(train_per_concept[name], color=c, linestyle='-', label=f'{name} (train)')
+#         ax[2].semilogy(val_per_concept[name], color=c, linestyle='--', label=f'{name} (val)')
+#     ax[2].set_xlabel('Epoch')
+#     ax[2].set_ylabel('MSELoss')
+#     ax[2].set_title('Per-Concept Loss')
+#     ax[2].legend(fontsize=7, ncol=2)
+
+#     fig.savefig(f'{output_dir}/detailed_losses.png', dpi=300)
+#     plt.close(fig)
+#     print(f'Saved {output_dir}/detailed_losses.png')
 
 
 def pairity_for_target():
@@ -797,9 +833,9 @@ def plot_concept_timeseries(output_dir=None, member='opa0'):
 
 
 if __name__ == "__main__":
-
+    visualize()
     # eval_gt_concepts()
-    plot_unet_pred()
-    plot_unet_concept()
+    # plot_unet_pred()
+    # plot_unet_concept()
     #plot_detailed_losses()
     #plot_concept_timeseries()

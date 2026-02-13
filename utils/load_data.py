@@ -22,18 +22,6 @@ class EmulatorDataset(Dataset):
         self.file_details = try_cast(config['DATASET.FILEDETAILS']['inputs'])
         self.concept_details = try_cast(config['DATASET.FILEDETAILS']['concepts'])
 
-        print('init')
-        # self.lazy_data = {}
-        # for feat in self.features:
-        #     data = []
-        #     for opa in self.opas:
-        #         dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
-        #         dp = dp.expand_dims(opa=[opa])
-        #         data.append(dp)
-        #     ds = xr.concat(data, dim="opa")
-        #     ds = ds.rename({'time_counter': 'time'})
-        #     ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-        #     self.lazy_data[feat] = ds
         self.lazy_data = {}
         for feat in self.features:
             data = []
@@ -44,9 +32,8 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_data[feat] = ds.persist()
+            self.lazy_data[feat] = ds.load()
         
-        print('got input')
         self.lazy_concepts = {}
         for concept in self.concepts:
             data = []
@@ -57,9 +44,8 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_concepts[concept] = ds
+            self.lazy_concepts[concept] = ds.load()
 
-        print('got concepts')
         self.lazy_labels = {}
         for label in self.labels:
             data = []
@@ -70,46 +56,45 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_labels[label] = ds
-        print('got label')
+            self.lazy_labels[label] = ds.load()
         self._materialized = False
 
-    def materialize(self):
-        """Extract numpy arrays from xarray for fast __getitem__."""
-        self._input_arrays = {}
-        for feat in self.features:
-            ds = self.lazy_data[feat]
-            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-            self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
-        print('materialized inputs')
+    # def materialize(self):
+    #     """Extract numpy arrays from xarray for fast __getitem__."""
+    #     self._input_arrays = {}
+    #     for feat in self.features:
+    #         ds = self.lazy_data[feat]
+    #         arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
+    #         self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
+    #     print('materialized inputs')
 
-        self._concept_arrays = {}
-        for concept in self.concepts:
-            ds = self.lazy_concepts[concept]
-            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-            arr = arr.squeeze(0)
-            if concept == 'vori':
-                arr = np.where(arr > 0, np.log10(arr), np.nan)
-                print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
-            elif concept in ('vohfe', 'von2', 'vos2'):
-                p2 = np.nanpercentile(arr, 2)
-                p98 = np.nanpercentile(arr, 98)
-                arr = np.clip(arr, p2, p98)
-                print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
-            self._concept_arrays[concept] = arr
-        print('materialized concepts')
+    #     self._concept_arrays = {}
+    #     for concept in self.concepts:
+    #         ds = self.lazy_concepts[concept]
+    #         arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
+    #         arr = arr.squeeze(0)
+    #         if concept == 'vori':
+    #             arr = np.where(arr > 0, np.log10(arr), np.nan)
+    #             print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
+    #         elif concept in ('vohfe', 'von2', 'vos2'):
+    #             p2 = np.nanpercentile(arr, 2)
+    #             p98 = np.nanpercentile(arr, 98)
+    #             arr = np.clip(arr, p2, p98)
+    #             print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
+    #         self._concept_arrays[concept] = arr
+    #     print('materialized concepts')
 
-        self._label_arrays = {}
-        for label in self.labels:
-            ds = self.lazy_labels[label]
-            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-            self._label_arrays[label] = arr.squeeze(0)
-        print('materialized labels')
-        # Free xarray data to avoid holding double the memory
-        self.lazy_data = {}
-        self.lazy_concepts = {}
-        self.lazy_labels = {}
-        self._materialized = True
+    #     self._label_arrays = {}
+    #     for label in self.labels:
+    #         ds = self.lazy_labels[label]
+    #         arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
+    #         self._label_arrays[label] = arr.squeeze(0)
+    #     print('materialized labels')
+    #     # Free xarray data to avoid holding double the memory
+    #     self.lazy_data = {}
+    #     self.lazy_concepts = {}
+    #     self.lazy_labels = {}
+    #     self._materialized = True
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)
@@ -124,15 +109,15 @@ class EmulatorDataset(Dataset):
         concept = self.get_concepts(member, time)
         return data, concept, label
 
-    def _getitem_fast(self, member, time):
-        X = np.stack([self._input_arrays[f][member, time:time+self.window]
-                      for f in self.features])
-        cidx = [time + self.window - 1 + lead for lead in self.offset]
-        C = np.stack([self._concept_arrays[c][member, cidx]
-                      for c in self.concepts])
-        L = np.stack([self._label_arrays[l][member, cidx]
-                      for l in self.labels])
-        return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
+    # def _getitem_fast(self, member, time):
+    #     X = np.stack([self._input_arrays[f][member, time:time+self.window]
+    #                   for f in self.features])
+    #     cidx = [time + self.window - 1 + lead for lead in self.offset]
+    #     C = np.stack([self._concept_arrays[c][member, cidx]
+    #                   for c in self.concepts])
+    #     L = np.stack([self._label_arrays[l][member, cidx]
+    #                   for l in self.labels])
+    #     return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
     
     def date_range(self):
         start = datetime.strptime(self.start, "%Y%m")
