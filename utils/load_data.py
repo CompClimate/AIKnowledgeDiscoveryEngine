@@ -23,18 +23,6 @@ class EmulatorDataset(Dataset):
         self.file_details = try_cast(config['DATASET.FILEDETAILS']['inputs'])
         self.concept_details = try_cast(config['DATASET.FILEDETAILS']['concepts'])
 
-        print('init')
-        # self.lazy_data = {}
-        # for feat in self.features:
-        #     data = []
-        #     for opa in self.opas:
-        #         dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
-        #         dp = dp.expand_dims(opa=[opa])
-        #         data.append(dp)
-        #     ds = xr.concat(data, dim="opa")
-        #     ds = ds.rename({'time_counter': 'time'})
-        #     ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-        #     self.lazy_data[feat] = ds
         self.lazy_data = {}
         for feat in self.features:
             data = []
@@ -45,9 +33,8 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_data[feat] = ds.persist()
+            self.lazy_data[feat] = ds.load()
         
-        print('got input')
         self.lazy_concepts = {}
         for concept in self.concepts:
             data = []
@@ -58,9 +45,8 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_concepts[concept] = ds
+            self.lazy_concepts[concept] = ds.load()
 
-        print('got concepts')
         self.lazy_labels = {}
         for label in self.labels:
             data = []
@@ -71,12 +57,11 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_labels[label] = ds
-        print('got label')
+            self.lazy_labels[label] = ds.load()
         self._materialized = False
 
     def materialize(self):
-        # extract numpy arrays from xarray for fast 
+        # extract numpy arrays from xarray for fast
         self._input_arrays = {}
         for feat in self.features:
             ds = self.lazy_data[feat]

@@ -23,7 +23,7 @@ mask = mask.to(DEVICE)
 
 def make_output_dir():
     """Build output directory name from config and ensure it doesn't overwrite."""
-    base = '/quobyte/maikesgrp/sanah/models'
+    base = config['OUTPUT']['dir']
     lam = config.getfloat('TRAINING', 'concept_lambda')
     ep = config.getint('TRAINING', 'epochs')
     lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
@@ -54,12 +54,8 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     out_loss_fn = getattr(torch.nn, out_loss_fn)()
     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
 
-    #model_type = config['MODEL']['type']
-    model_type = 'unet'
-    #model = get_config.get_model()
-    model = UNetCBM(n_features=len(try_cast(config['DATASET']['features']))*config.getint('DATASET', 'context_window'),
-        n_concepts=len(try_cast(config['DATASET']['concepts'])),
-        output_dim=len(try_cast(config['DATASET']['offset'])))
+    model_type = config['MODEL']['type']
+    model = get_config.get_model()
     model.to(DEVICE)
     optimizer = get_config.get_optimizer(model)
     scheduler = get_config.get_scheduler(optimizer)
@@ -77,54 +73,58 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     val_losses = []
     pred_losses = []
     val_pred_losses = []
+    concept_losses = []
+    val_concept_losses = []
     per_concept_losses = {name: [] for name in concept_names}
     val_per_concept_losses = {name: [] for name in concept_names}
     for epoch in range(start_epoch, n_epochs):
         print(DEVICE)
-        print(f'in epoch {epoch}', flush=True)
         model.train(True)
-        train_loss_accum = None
+        train_loss_accum = 0
         train_pred_accum = 0
-        train_concept_accum = [0.0] * n_concepts
+        train_concept_accum = 0
+        train_per_concept_accum = [0.0] * n_concepts
         n_snaps = 0
         for batch, concept_y, y in train_loader:
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
-            #y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
+            #y = torch.nan_to_num(output_norm.normalize(y), nan=0.0) #use again if using real world values not anomaly
             y = torch.nan_to_num(y, nan=0.0)
             batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
             pred, concept_pred = model(batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
+
             pred_loss = out_loss_fn(pred, y)
             concept_loss = concept_loss_fn(concept_pred, concept_y)
-            print('pred loss: ', pred_loss.item())
-            print('concept loss: ', concept_loss.item())
             loss = (1-concept_lambda) * pred_loss + (concept_lambda * concept_loss)
-            n_snaps += 1
-            if train_loss_accum is not None:
-              train_loss_accum = train_loss_accum.add(loss)
-            else:
-              train_loss_accum = loss
-            train_pred_accum += pred_loss.item()
-            for ci in range(n_concepts):
-                cl = concept_loss_fn(concept_pred[:, ci], concept_y[:, ci])
-                train_concept_accum[ci] += cl.item()
+            
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            n_snaps += 1
+            train_loss_accum += loss.item()
+            train_pred_accum += pred_loss.item()
+            train_concept_accum += concept_loss.item()
+            for ci in range(n_concepts):
+                cl = concept_loss_fn(concept_pred[:, ci], concept_y[:, ci])
+                train_per_concept_accum[ci] += cl.item()
         loss_mean = train_loss_accum / n_snaps
+        losses.append(loss_mean)
         pred_losses.append(train_pred_accum / n_snaps)
+        concept_losses.append(train_concept_accum / n_snaps)
         for ci, name in enumerate(concept_names):
-            per_concept_losses[name].append(train_concept_accum[ci] / n_snaps)
+            per_concept_losses[name].append(train_per_concept_accum[ci] / n_snaps)
 
         val_loss = 0
         val_pred_accum = 0
-        val_concept_accum = [0.0] * n_concepts
+        val_concept_accum = 0
+        val_per_concept_accum = [0.0] * n_concepts
+        n_snaps = 0
         model.eval()
         with torch.no_grad():
-            n_snaps = 0
             for val_batch, val_concept_y, val_y in val_loader:
                 val_batch = torch.nan_to_num(input_norm.normalize(val_batch), nan=0.0)
                 val_concept_y = torch.nan_to_num(concept_norm.normalize(val_concept_y), nan=0.0)
@@ -136,16 +136,23 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 pred = pred*mask
                 concept_pred = concept_pred*mask
 
-                val_loss += ((1-concept_lambda) * out_loss_fn(pred, val_y)) + (concept_lambda * concept_loss_fn(concept_pred, val_concept_y))
-                val_pred_accum += out_loss_fn(pred, val_y).item()
+                n_snaps += 1
+                val_pred_loss = out_loss_fn(pred, val_y).item()
+                val_concept_loss = concept_loss_fn(concept_pred, val_concept_y).item()
+                val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss
+                val_pred_accum += val_pred_loss
+                val_concept_accum += val_concept_loss
                 for ci in range(n_concepts):
                     cl = concept_loss_fn(concept_pred[:, ci], val_concept_y[:, ci])
-                    val_concept_accum[ci] += cl.item()
-                n_snaps += 1
+                    val_per_concept_accum[ci] += cl.item()
+                
             val_loss_mean = val_loss / n_snaps
+            val_losses.append(val_loss_mean)
             val_pred_losses.append(val_pred_accum / n_snaps)
+            val_concept_losses.append(val_concept_accum / n_snaps)
             for ci, name in enumerate(concept_names):
-                val_per_concept_losses[name].append(val_concept_accum[ci] / n_snaps) 
+                val_per_concept_losses[name].append(val_per_concept_accum[ci] / n_snaps) 
+            
             if scheduler_name == 'ReduceLROnPlateau':
                 # Step the scheduler based on validation loss
                 scheduler.step(val_loss_mean)
@@ -155,8 +162,6 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
         if epoch % 5 == 0:
             print(f"epoch: {epoch}; loss: {loss_mean:.5f}; val_loss: {val_loss_mean:.5f}")
             print(f"learning rate: {optimizer.param_groups[0]['lr']}")
-        losses.append(loss_mean.item())
-        val_losses.append(val_loss_mean.item())
         if epoch % config.getint('OUTPUT', 'n_epochs_between_checkpoints') == 0:
             #update to have model save with more detail
             save_model = f"{model_type}"        
@@ -167,8 +172,12 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             torch.save(losses, f"{output}/losses.pt")
             torch.save(val_losses, f"{output}/val_losses.pt")
             torch.save({
+                'loss': losses,
+                'val_loss': val_losses,
                 'train_pred': pred_losses,
                 'val_pred': val_pred_losses,
+                'concept_loss': concept_losses,
+                'val_concept_loss' : val_concept_losses,
                 'train_per_concept': per_concept_losses,
                 'val_per_concept': val_per_concept_losses,
             }, f"{output}/detailed_losses.pt")
@@ -182,8 +191,12 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
     out_loss_fn = getattr(torch.nn, out_loss_fn)()
     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
 
-    test_loss = 0
+    test_loss_accum = 0
+    test_pred_accum = 0
+    test_concept_accum = 0
+    test_per_concept_accum = [0.0] * n_concepts
     n_snaps = 0
+    model.eval()   
     with torch.no_grad():
         for test_batch, concept_y, y in test_loader:
             test_batch = torch.nan_to_num(input_norm.normalize(test_batch), nan=0.0)
@@ -195,8 +208,21 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             pred, concept_pred = model(test_batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
-            test_loss += ((1-concept_lambda) * out_loss_fn(pred, y)) + (concept_lambda * concept_loss_fn(concept_pred, concept_y))     
-            n_snaps += 1          
-        test_loss /= n_snaps
-        print(f'test_loss:{test_loss}')
+
+            n_snaps += 1
+            test_pred_loss = out_loss_fn(pred, val_y).item()
+            test_concept_loss = concept_loss_fn(concept_pred, val_concept_y).item()
+            test_loss_accum += (1-concept_lambda) * test_pred_loss + concept_lambda * test_concept_loss
+            test_pred_accum += val_pred_loss
+            test_concept_accum += val_concept_loss
+            for ci in range(n_concepts):
+                cl = concept_loss_fn(concept_pred[:, ci], val_concept_y[:, ci])
+                test_per_concept_accum[ci] += cl.item()
+            
+        test_loss = test_loss_accum / n_snaps
+        test_pred_loss = test_pred_accum / n_snaps
+        test_concept_loss = test_concept_accum / n_snaps
+        for ci in range(n_concepts):
+            test_per_concept_accum[ci] /= n_snaps
+
     return test_loss         
