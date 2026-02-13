@@ -4,6 +4,7 @@ from dateutil.relativedelta import relativedelta
 import xarray as xr
 import numpy as np
 import torch
+from scipy.ndimage import gaussian_filter
 from utils.get_config import try_cast, parse_section, config
 
 xr.set_options(use_new_combine_kwarg_defaults=True)
@@ -75,13 +76,16 @@ class EmulatorDataset(Dataset):
         self._materialized = False
 
     def materialize(self):
-        """Extract numpy arrays from xarray for fast __getitem__."""
+        # extract numpy arrays from xarray for fast 
         self._input_arrays = {}
         for feat in self.features:
             ds = self.lazy_data[feat]
             arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
             self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
         print('materialized inputs')
+
+        smooth_concepts = try_cast(config.get('DATASET', 'smooth_concepts', fallback='[]'))
+        smooth_sigma = config.getfloat('DATASET', 'smooth_sigma', fallback=0)
 
         self._concept_arrays = {}
         for concept in self.concepts:
@@ -96,6 +100,16 @@ class EmulatorDataset(Dataset):
                 p98 = np.nanpercentile(arr, 98)
                 arr = np.clip(arr, p2, p98)
                 print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
+            # gaussian smoothing (only spatial dims, per member per timestep)
+            if concept in smooth_concepts and smooth_sigma > 0:
+                for m in range(arr.shape[0]):
+                    for t in range(arr.shape[1]):
+                        slice_2d = arr[m, t]
+                        nan_mask = np.isnan(slice_2d)
+                        slice_2d[nan_mask] = 0.0
+                        arr[m, t] = gaussian_filter(slice_2d, sigma=smooth_sigma)
+                        arr[m, t][nan_mask] = np.nan
+                print(f'  {concept}: smoothed with sigma={smooth_sigma}')
             self._concept_arrays[concept] = arr
         print('materialized concepts')
 
@@ -105,7 +119,7 @@ class EmulatorDataset(Dataset):
             arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
             self._label_arrays[label] = arr.squeeze(0)
         print('materialized labels')
-        # Free xarray data to avoid holding double the memory
+        # free xarray data to avoid holding double the memory
         self.lazy_data = {}
         self.lazy_concepts = {}
         self.lazy_labels = {}
