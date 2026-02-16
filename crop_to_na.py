@@ -146,6 +146,8 @@ if __name__ == "__main__":
     cell = 'T'
     member = sys.argv[1]
     concept = sys.argv[2]
+    member = 'climate_modes'
+    concept = 'amo'
 
     if concept in ['sowsc', 'voep']:
         cell = 'F'

@@ -18,7 +18,6 @@ def run():
         test_losses = eval(input_norm, concept_norm, output_norm, model, test_loader)
         test_done = time.time()
         print('testing done ', test_done - train_done)
-    #plot_detailed_losses()
     visualize()
 
 if __name__ == '__main__':

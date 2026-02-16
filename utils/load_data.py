@@ -59,42 +59,42 @@ class EmulatorDataset(Dataset):
             self.lazy_labels[label] = ds.load()
         self._materialized = False
 
-    # def materialize(self):
-    #     """Extract numpy arrays from xarray for fast __getitem__."""
-    #     self._input_arrays = {}
-    #     for feat in self.features:
-    #         ds = self.lazy_data[feat]
-    #         arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-    #         self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
-    #     print('materialized inputs')
+    def materialize(self):
+        """Extract numpy arrays from xarray for fast __getitem__."""
+        self._input_arrays = {}
+        for feat in self.features:
+            ds = self.lazy_data[feat]
+            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
+            self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
+        print('materialized inputs')
 
-    #     self._concept_arrays = {}
-    #     for concept in self.concepts:
-    #         ds = self.lazy_concepts[concept]
-    #         arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-    #         arr = arr.squeeze(0)
-    #         if concept == 'vori':
-    #             arr = np.where(arr > 0, np.log10(arr), np.nan)
-    #             print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
-    #         elif concept in ('vohfe', 'von2', 'vos2'):
-    #             p2 = np.nanpercentile(arr, 2)
-    #             p98 = np.nanpercentile(arr, 98)
-    #             arr = np.clip(arr, p2, p98)
-    #             print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
-    #         self._concept_arrays[concept] = arr
-    #     print('materialized concepts')
+        self._concept_arrays = {}
+        for concept in self.concepts:
+            ds = self.lazy_concepts[concept]
+            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
+            arr = arr.squeeze(0)
+            if concept == 'vori':
+                arr = np.where(arr > 0, np.log10(arr), np.nan)
+                print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
+            elif concept in ('vohfe', 'von2', 'vos2'):
+                p2 = np.nanpercentile(arr, 2)
+                p98 = np.nanpercentile(arr, 98)
+                arr = np.clip(arr, p2, p98)
+                print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
+            self._concept_arrays[concept] = arr
+        print('materialized concepts')
 
-    #     self._label_arrays = {}
-    #     for label in self.labels:
-    #         ds = self.lazy_labels[label]
-    #         arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-    #         self._label_arrays[label] = arr.squeeze(0)
-    #     print('materialized labels')
-    #     # Free xarray data to avoid holding double the memory
-    #     self.lazy_data = {}
-    #     self.lazy_concepts = {}
-    #     self.lazy_labels = {}
-    #     self._materialized = True
+        self._label_arrays = {}
+        for label in self.labels:
+            ds = self.lazy_labels[label]
+            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
+            self._label_arrays[label] = arr.squeeze(0)
+        print('materialized labels')
+        # Free xarray data to avoid holding double the memory
+        self.lazy_data = {}
+        self.lazy_concepts = {}
+        self.lazy_labels = {}
+        self._materialized = True
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)

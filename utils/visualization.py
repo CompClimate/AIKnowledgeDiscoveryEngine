@@ -100,65 +100,6 @@ def visualize():
     plt.close(fig)
 
 
-# def plot_detailed_losses(losses_path=None, output_dir=None):
-#     if output_dir is None:
-#         output_dir = find_output_dir()
-#     if losses_path is None:
-#         losses_path = f'{output_dir}/detailed_losses.pt'
-#     data = torch.load(losses_path, weights_only=False)
-#     train_pred = data['train_pred']
-#     val_pred = data['val_pred']
-#     train_per_concept = data['train_per_concept']
-#     val_per_concept = data['val_per_concept']
-#     concept_names = list(train_per_concept.keys())
-
-#     # Compute combined loss: (1 - lambda) * pred + lambda * mean(concept losses)
-#     from utils.get_config import config
-#     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
-#     n_epochs = len(train_pred)
-#     train_combined = []
-#     val_combined = []
-#     for e in range(n_epochs):
-#         train_concept_mean = sum(train_per_concept[name][e] for name in concept_names) / len(concept_names)
-#         val_concept_mean = sum(val_per_concept[name][e] for name in concept_names) / len(concept_names)
-#         train_combined.append((1 - concept_lambda) * train_pred[e] + concept_lambda * train_concept_mean)
-#         val_combined.append((1 - concept_lambda) * val_pred[e] + concept_lambda * val_concept_mean)
-
-#     # Panel 1: combined loss, Panel 2: prediction loss, Panel 3: per-concept losses
-#     fig, ax = plt.subplots(1, 3, figsize=(18, 5), layout='constrained')
-
-#     # Combined loss
-#     ax[0].semilogy(train_combined, label='train')
-#     ax[0].semilogy(val_combined, label='val')
-#     ax[0].set_xlabel('Epoch')
-#     ax[0].set_ylabel('Loss')
-#     ax[0].set_title(f'Combined Loss (lambda={concept_lambda})')
-#     ax[0].legend()
-
-#     # Prediction loss
-#     ax[1].semilogy(train_pred, label='train')
-#     ax[1].semilogy(val_pred, label='val')
-#     ax[1].set_xlabel('Epoch')
-#     ax[1].set_ylabel('BCEWithLogitsLoss')
-#     ax[1].set_title('Prediction Loss')
-#     ax[1].legend()
-
-#     # Per-concept losses (same colour per concept, solid=train, dashed=val)
-#     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-#     for i, name in enumerate(concept_names):
-#         c = colors[i % len(colors)]
-#         ax[2].semilogy(train_per_concept[name], color=c, linestyle='-', label=f'{name} (train)')
-#         ax[2].semilogy(val_per_concept[name], color=c, linestyle='--', label=f'{name} (val)')
-#     ax[2].set_xlabel('Epoch')
-#     ax[2].set_ylabel('MSELoss')
-#     ax[2].set_title('Per-Concept Loss')
-#     ax[2].legend(fontsize=7, ncol=2)
-
-#     fig.savefig(f'{output_dir}/detailed_losses.png', dpi=300)
-#     plt.close(fig)
-#     print(f'Saved {output_dir}/detailed_losses.png')
-
-
 def pairity_for_target():
     home_dir = os.path.expanduser("~")
     print('Starting parity visualization...', flush=True)
@@ -184,7 +125,6 @@ def pairity_for_target():
 
     # Loop through lead times (time_step 0, 1, 2)
     for time_step in range(3):
-        # MOVE subplots inside here so each file (1, 3, 6) starts with a clean figure
         fig, axes = plt.subplots(1, len(epochs_to_check), figsize=(20, 5))
         
         for i, epoch in enumerate(epochs_to_check):
