@@ -4,6 +4,7 @@ from dateutil.relativedelta import relativedelta
 import xarray as xr
 import numpy as np
 import torch
+from scipy.ndimage import gaussian_filter
 from utils.get_config import try_cast, parse_section, config
 
 xr.set_options(use_new_combine_kwarg_defaults=True)
@@ -137,7 +138,7 @@ class EmulatorDataset(Dataset):
             var_slice = self.lazy_data[feat].isel(time=slice(time, time+self.window), opa=member).to_array(dim='variable')
             var_slice = var_slice.sel(y=slice(0, 302),x=slice(0, 400))
             X_vars.append(var_slice.values)
-        X_vals = np.concat(X_vars)
+        X_vals = np.concatenate(X_vars)
         return torch.from_numpy(X_vals).float()
 
     def get_concepts(self, member, time):

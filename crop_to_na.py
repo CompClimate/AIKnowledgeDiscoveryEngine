@@ -37,7 +37,7 @@ def crop_concept_to_zarr(
         for month_idx in range(1, 13):
             ym = f"{year}{month_idx:02d}"
             infile = (
-                f"/quobyte/maikesgrp/sanah/concepts/{concept}/{member}/"
+                f"/quobyte/maikesgrp/sanah/target/{concept}/{member}/"
                 f"{concept}_{ym}_{cell}.nc"
             )
 
@@ -110,10 +110,7 @@ def crop_input_to_zarr(
                 continue  # skip this file
 
             # Crop North Atlantic using 2D curvilinear coordinates
-            mask = (
-                (ds.nav_lon >= lon_bounds[0]) & (ds.nav_lon <= lon_bounds[1]) &
-                (ds.nav_lat >= lat_bounds[0]) & (ds.nav_lat <= lat_bounds[1])
-            )
+            mask = ((ds.nav_lon >= lon_bounds[0]) & (ds.nav_lon <= lon_bounds[1]) & (ds.nav_lat >= lat_bounds[0]) & (ds.nav_lat <= lat_bounds[1]))
 
             y_inds = mask.any(dim="x")
             x_inds = mask.any(dim="y")
