@@ -57,8 +57,8 @@ def get_dataset():
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
-    val_loader = DataLoader(val_set, batch_size = batch_size, shuffle = True)
-    test_loader = DataLoader(test_set, batch_size = batch_size, shuffle = True)
+    val_loader = DataLoader(val_set, batch_size = batch_size, shuffle = False)
+    test_loader = DataLoader(test_set, batch_size = batch_size, shuffle = False)
     end_time = time.time()
     print(f'done in {end_time - start_time}', flush=True)
 

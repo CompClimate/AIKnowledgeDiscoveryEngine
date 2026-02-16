@@ -61,16 +61,13 @@ class EmulatorDataset(Dataset):
         self._materialized = False
 
     def materialize(self):
-        # extract numpy arrays from xarray for fast
+        """Extract numpy arrays from xarray for fast __getitem__."""
         self._input_arrays = {}
         for feat in self.features:
             ds = self.lazy_data[feat]
             arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
             self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
         print('materialized inputs')
-
-        smooth_concepts = try_cast(config.get('DATASET', 'smooth_concepts', fallback='[]'))
-        smooth_sigma = config.getfloat('DATASET', 'smooth_sigma', fallback=0)
 
         self._concept_arrays = {}
         for concept in self.concepts:
@@ -85,16 +82,6 @@ class EmulatorDataset(Dataset):
                 p98 = np.nanpercentile(arr, 98)
                 arr = np.clip(arr, p2, p98)
                 print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
-            # gaussian smoothing (only spatial dims, per member per timestep)
-            if concept in smooth_concepts and smooth_sigma > 0:
-                for m in range(arr.shape[0]):
-                    for t in range(arr.shape[1]):
-                        slice_2d = arr[m, t]
-                        nan_mask = np.isnan(slice_2d)
-                        slice_2d[nan_mask] = 0.0
-                        arr[m, t] = gaussian_filter(slice_2d, sigma=smooth_sigma)
-                        arr[m, t][nan_mask] = np.nan
-                print(f'  {concept}: smoothed with sigma={smooth_sigma}')
             self._concept_arrays[concept] = arr
         print('materialized concepts')
 
@@ -104,7 +91,7 @@ class EmulatorDataset(Dataset):
             arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
             self._label_arrays[label] = arr.squeeze(0)
         print('materialized labels')
-        # free xarray data to avoid holding double the memory
+        # Free xarray data to avoid holding double the memory
         self.lazy_data = {}
         self.lazy_concepts = {}
         self.lazy_labels = {}
@@ -123,15 +110,15 @@ class EmulatorDataset(Dataset):
         concept = self.get_concepts(member, time)
         return data, concept, label
 
-    def _getitem_fast(self, member, time):
-        X = np.stack([self._input_arrays[f][member, time:time+self.window]
-                      for f in self.features])
-        cidx = [time + self.window - 1 + lead for lead in self.offset]
-        C = np.stack([self._concept_arrays[c][member, cidx]
-                      for c in self.concepts])
-        L = np.stack([self._label_arrays[l][member, cidx]
-                      for l in self.labels])
-        return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
+    # def _getitem_fast(self, member, time):
+    #     X = np.stack([self._input_arrays[f][member, time:time+self.window]
+    #                   for f in self.features])
+    #     cidx = [time + self.window - 1 + lead for lead in self.offset]
+    #     C = np.stack([self._concept_arrays[c][member, cidx]
+    #                   for c in self.concepts])
+    #     L = np.stack([self._label_arrays[l][member, cidx]
+    #                   for l in self.labels])
+    #     return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
     
     def date_range(self):
         start = datetime.strptime(self.start, "%Y%m")
@@ -151,7 +138,7 @@ class EmulatorDataset(Dataset):
             var_slice = self.lazy_data[feat].isel(time=slice(time, time+self.window), opa=member).to_array(dim='variable')
             var_slice = var_slice.sel(y=slice(0, 302),x=slice(0, 400))
             X_vars.append(var_slice.values)
-        X_vals = np.concat(X_vars)
+        X_vals = np.concatenate(X_vars)
         return torch.from_numpy(X_vals).float()
 
     def get_concepts(self, member, time):

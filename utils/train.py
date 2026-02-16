@@ -1,7 +1,6 @@
 # trains models
 # returns training loss and val loss
 
-from models import UNetCBM
 from utils.get_data import get_dataset
 #from utils.compute_stats import compute_mean_std, FeatureStandardize
 import torch
@@ -29,7 +28,8 @@ def make_output_dir():
     lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
     bs = config.getint('DATASET', 'batch_size')
     loss = config['TRAINING']['out_loss_fn']
-    name = f"lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}"
+    model_type = config['MODEL']['type']
+    name = f"{model_type}_lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}"
     output = f"{base}/{name}"
     # Append version number if directory already exists
     if os.path.exists(output):
@@ -191,6 +191,9 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
     out_loss_fn = getattr(torch.nn, out_loss_fn)()
     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
 
+    concept_names = try_cast(config['DATASET']['concepts'])
+    n_concepts = len(concept_names)
+
     test_loss_accum = 0
     test_pred_accum = 0
     test_concept_accum = 0
@@ -210,13 +213,13 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             concept_pred = concept_pred*mask
 
             n_snaps += 1
-            test_pred_loss = out_loss_fn(pred, val_y).item()
-            test_concept_loss = concept_loss_fn(concept_pred, val_concept_y).item()
+            test_pred_loss = out_loss_fn(pred, y).item()
+            test_concept_loss = concept_loss_fn(concept_pred, concept_y).item()
             test_loss_accum += (1-concept_lambda) * test_pred_loss + concept_lambda * test_concept_loss
-            test_pred_accum += val_pred_loss
-            test_concept_accum += val_concept_loss
+            test_pred_accum += test_pred_loss
+            test_concept_accum += test_concept_loss
             for ci in range(n_concepts):
-                cl = concept_loss_fn(concept_pred[:, ci], val_concept_y[:, ci])
+                cl = concept_loss_fn(concept_pred[:, ci], concept_y[:, ci])
                 test_per_concept_accum[ci] += cl.item()
             
         test_loss = test_loss_accum / n_snaps
@@ -225,4 +228,10 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
         for ci in range(n_concepts):
             test_per_concept_accum[ci] /= n_snaps
 
-    return test_loss         
+    test_per_concept = {name: test_per_concept_accum[ci] for ci, name in enumerate(concept_names)}
+    return {
+        'test_loss': test_loss,
+        'test_pred': test_pred_loss,
+        'test_concept': test_concept_loss,
+        'test_per_concept': test_per_concept,
+    }
