@@ -57,7 +57,7 @@ class EmulatorDataset(Dataset):
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
-            self.np_labels[label] = ds.load()
+            self.np_labels[label] = ds.to_array().values
         self._materialized = False
 
     def materialize(self):
@@ -133,7 +133,7 @@ class EmulatorDataset(Dataset):
     
     def get_input_window(self, member, time):
         X_vars = []
-        feature_idx = slice(time, time-self.window)
+        feature_idx = slice(time, time+self.window)
         for feat in self.features:
             var_slice = self.np_data[feat][0][member][feature_idx]
             X_vars.append(var_slice)
