@@ -23,41 +23,41 @@ class EmulatorDataset(Dataset):
         self.file_details = try_cast(config['DATASET.FILEDETAILS']['inputs'])
         self.concept_details = try_cast(config['DATASET.FILEDETAILS']['concepts'])
 
-        self.lazy_data = {}
+        self.np_data = {}
         for feat in self.features:
             data = []
             for opa in self.opas:
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
+                dp = dp.sel(y=slice(0, 302), x=slice(0,400))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
-            ds = ds.rename({'time_counter': 'time'})
-            ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_data[feat] = ds.load()
-        
-        self.lazy_concepts = {}
+            ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
+            self.np_data[feat] = ds.to_array().values
+
+        self.np_concepts = {}
         for concept in self.concepts:
             data = []
             for opa in self.opas:
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{concept}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
+                dp = dp.sel(y=slice(0, 302), x=slice(0,400))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
-            ds = ds.rename({'time_counter': 'time'})
-            ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_concepts[concept] = ds.load()
+            ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
+            self.np_concepts[concept] = ds.to_array().values
 
-        self.lazy_labels = {}
+        self.np_labels = {}
         for label in self.labels:
             data = []
             for opa in self.opas:
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{label}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
+                dp = dp.sel(y=slice(0, 302), x=slice(0,400))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
-            ds = ds.rename({'time_counter': 'time'})
-            ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
-            self.lazy_labels[label] = ds.load()
+            ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
+            self.np_labels[label] = ds.load()
         self._materialized = False
 
     def materialize(self):
@@ -131,34 +131,29 @@ class EmulatorDataset(Dataset):
             cur_date += relativedelta(months=1)
         return date_list
     
-    # using .values makes this not lazy TODO Fix
     def get_input_window(self, member, time):
         X_vars = []
+        feature_idx = slice(time, time-self.window)
         for feat in self.features:
-            var_slice = self.lazy_data[feat].isel(time=slice(time, time+self.window), opa=member).to_array(dim='variable')
-            var_slice = var_slice.sel(y=slice(0, 302),x=slice(0, 400))
-            X_vars.append(var_slice.values)
-        X_vals = np.concatenate(X_vars)
+            var_slice = self.np_data[feat][0][member][feature_idx]
+            X_vars.append(var_slice)
+        X_vals = np.stack(X_vars)
         return torch.from_numpy(X_vals).float()
 
     def get_concepts(self, member, time):
         c_vars = []
         concept_idx = [time+self.window-1+lead for lead in self.offset]
         for concept in self.concepts:
-            concept_slice = self.lazy_concepts[concept].isel(time=concept_idx, opa=member).to_array(dim='variable')
-            concept_slice = concept_slice.sel(y=slice(0, 302), x=slice(0,400))
+            concept_slice = self.np_concepts[concept][0][member][concept_idx]
             c_vars.append(concept_slice)
-        c_vals = xr.concat(c_vars, dim='variable')
-        c_vals = c_vals.transpose("variable", "time", "y", "x")
-        return torch.from_numpy(c_vals.values).float()
+        c_vals = np.stack(c_vars)
+        return torch.from_numpy(c_vals).float()
     
     def get_label(self, member, time):
         l_vars = []
         label_idx = [time+self.window-1+lead for lead in self.offset]
         for label in self.labels:
-            ds = self.lazy_labels[label].isel(time=label_idx, opa=member).to_array(dim='variable')
-            ds = ds.sel(y=slice(0, 302), x=slice(0,400))
-            l_vars.append(ds)
-        l_vals = xr.concat(l_vars, dim="variable")
-        l_vals = l_vals.transpose("variable", "time", "y", "x")
-        return torch.from_numpy(l_vals.values).float()
+            label_slice = self.np_labels[label][0][member][label_idx]
+            l_vars.append(label_slice)
+        l_vals = np.stack(l_vars)
+        return torch.from_numpy(l_vals).float()
