@@ -77,7 +77,7 @@ class EmulatorDataset(Dataset):
         for concept in self.concepts_to_clip:
             arr = self.np_concepts[concept]
             if concept == 'vori':
-                arr = np.where(arr > 0, np.log10(arr), np.nan)
+                arr = np.sign(arr) * np.log10(1 + np.abs(arr))
                 print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
             elif concept in ('vohfe', 'von2', 'vos2'):
                 p2 = np.nanpercentile(arr, 2)
@@ -125,8 +125,10 @@ class EmulatorDataset(Dataset):
         concept_idx = [time+self.window-1+lead for lead in self.offset]
         for concept in self.concepts:
             if concept in climate_modes:
-                concept_idx = [time-lag for time in concept_idx]
-            concept_slice = self.np_concepts[concept][member][concept_idx]
+                lag_idx = [time-lag for time in concept_idx]
+                concept_slice = self.np_concepts[concept][member][lag_idx]
+            else:
+                concept_slice = self.np_concepts[concept][member][concept_idx]
             c_vars.append(concept_slice)
         c_vals = np.stack(c_vars)
         return torch.from_numpy(c_vals).float()

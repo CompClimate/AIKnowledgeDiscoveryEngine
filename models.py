@@ -16,10 +16,12 @@ class PointwiseCBM(nn.Module):
             nn.Linear(n_features, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, n_concepts*output_dim),
-            #nn.Sigmoid()  # concepts typically in [0,1]
         )
         
-        self.output_net = nn.Linear(n_concepts*output_dim, output_dim)
+        self.output_net = nn.Sequential(
+            nn.Linear(n_concepts*output_dim, output_dim),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
         B, V, T, Y, X = x.shape
@@ -52,7 +54,7 @@ class PointwiseNoCBM(nn.Module):
             nn.Linear(n_features, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, output_dim),
-            #nn.Sigmoid()  # concepts typically in [0,1]
+            nn.Sigmoid()  # concepts typically in [0,1]
         )
 
     def forward(self, x):

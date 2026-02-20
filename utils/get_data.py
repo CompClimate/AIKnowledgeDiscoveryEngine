@@ -40,15 +40,15 @@ def get_dataset():
     print('subsetting done', flush=True)
 
     #TODO move norm type to config
-    input_norm = MinMaxNormalize() 
+    # out_loss_fn = config['TRAINING']['out_loss_fn']
+    # out_loss_fn = getattr(torch.nn, out_loss_fn)()
+    input_norm = MinMaxNormalize()
     concept_norm = MinMaxNormalize()
-    output_norm = MinMaxNormalize()
+    output_norm = MinMaxNormalize() 
 
     X_vars = []
     for feat in features:
-        print(feat)
         var_slice = dataset.np_data[feat]
-        print(var_slice.shape)
         X_vars.append(var_slice)
     X_vals = np.stack(X_vars)
 

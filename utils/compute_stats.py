@@ -30,8 +30,6 @@ class MinMaxNormalize():
     def fit(self, x):
         self.min = torch.from_numpy(np.nanmin(x, axis=(1, 2, 3, 4))).float()
         self.max = torch.from_numpy(np.nanmax(x, axis=(1, 2, 3, 4))).float()
-        print(self.min.shape)
-        print(self.max.shape)
 
     def normalize(self, x):
         bottom = torch.clamp(self.max[None, :, None, None, None] - self.min[None, :, None, None, None], 1e-8)
