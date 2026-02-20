@@ -14,6 +14,7 @@ import os
 def get_dataset():
     start_time = time.time()
     dataset = EmulatorDataset()
+    #dataset.materialize()
     print('dataset initialized', flush=True)
     n = len(dataset)
     print(f'dataset length: {n}', flush=True)

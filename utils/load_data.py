@@ -34,7 +34,8 @@ class EmulatorDataset(Dataset):
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
             self.lazy_data[feat] = ds.load()
-        
+            print(f'  loaded {feat}', flush=True)
+
         self.lazy_concepts = {}
         for concept in self.concepts:
             data = []
@@ -46,6 +47,7 @@ class EmulatorDataset(Dataset):
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
             self.lazy_concepts[concept] = ds.load()
+            print(f'  loaded {concept}', flush=True)
 
         self.lazy_labels = {}
         for label in self.labels:
@@ -58,7 +60,26 @@ class EmulatorDataset(Dataset):
             ds = ds.rename({'time_counter': 'time'})
             ds = ds.assign_coords(time=np.arange(ds.sizes["time"]))
             self.lazy_labels[label] = ds.load()
+            print(f'  loaded {label}', flush=True)
+        self.smooth_concepts = try_cast(config.get('DATASET', 'smooth_concepts', fallback='[]'))
+        self.smooth_inputs = try_cast(config.get('DATASET', 'smooth_inputs', fallback='[]'))
+        self.smooth_sigma = config.getfloat('DATASET', 'smooth_sigma', fallback=2)
         self._materialized = False
+
+    def _smooth(self, arr):
+        """Apply Gaussian smoothing to each 2D spatial slice."""
+        for m in range(arr.shape[0]):
+            for t in range(arr.shape[1]):
+                arr[m, t] = gaussian_filter(np.nan_to_num(arr[m, t], nan=0.0), sigma=self.smooth_sigma)
+        return arr
+
+    def _clip(self, arr, name):
+        """Clip to [2, 98] percentile."""
+        p2 = np.nanpercentile(arr, 2)
+        p98 = np.nanpercentile(arr, 98)
+        arr = np.clip(arr, p2, p98)
+        print(f'  {name}: clipped to [{p2:.3g}, {p98:.3g}]')
+        return arr
 
     def materialize(self):
         """Extract numpy arrays from xarray for fast __getitem__."""
@@ -66,7 +87,12 @@ class EmulatorDataset(Dataset):
         for feat in self.features:
             ds = self.lazy_data[feat]
             arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-            self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
+            arr = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
+            if feat in self.smooth_inputs:
+                arr = self._smooth(arr)
+                print(f'  {feat}: smoothed with sigma={self.smooth_sigma}')
+            arr = self._clip(arr, feat)
+            self._input_arrays[feat] = arr
         print('materialized inputs')
 
         self._concept_arrays = {}
@@ -77,11 +103,9 @@ class EmulatorDataset(Dataset):
             if concept == 'vori':
                 arr = np.where(arr > 0, np.log10(arr), np.nan)
                 print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
-            elif concept in ('vohfe', 'von2', 'vos2'):
-                p2 = np.nanpercentile(arr, 2)
-                p98 = np.nanpercentile(arr, 98)
-                arr = np.clip(arr, p2, p98)
-                print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
+            arr = self._smooth(arr)
+            print(f'  {concept}: smoothed with sigma={self.smooth_sigma}')
+            arr = self._clip(arr, concept)
             self._concept_arrays[concept] = arr
         print('materialized concepts')
 
@@ -110,15 +134,15 @@ class EmulatorDataset(Dataset):
         concept = self.get_concepts(member, time)
         return data, concept, label
 
-    # def _getitem_fast(self, member, time):
-    #     X = np.stack([self._input_arrays[f][member, time:time+self.window]
-    #                   for f in self.features])
-    #     cidx = [time + self.window - 1 + lead for lead in self.offset]
-    #     C = np.stack([self._concept_arrays[c][member, cidx]
-    #                   for c in self.concepts])
-    #     L = np.stack([self._label_arrays[l][member, cidx]
-    #                   for l in self.labels])
-    #     return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
+    def _getitem_fast(self, member, time):
+        X = np.stack([self._input_arrays[f][member, time:time+self.window]
+                      for f in self.features])
+        cidx = [time + self.window - 1 + lead for lead in self.offset]
+        C = np.stack([self._concept_arrays[c][member, cidx]
+                      for c in self.concepts])
+        L = np.stack([self._label_arrays[l][member, cidx]
+                      for l in self.labels])
+        return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
     
     def date_range(self):
         start = datetime.strptime(self.start, "%Y%m")
