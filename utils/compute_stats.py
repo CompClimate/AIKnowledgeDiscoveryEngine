@@ -38,7 +38,7 @@ class MinMaxNormalize():
         return (x - self.min[None, :, None, None, None]) / bottom
 
     def denormalize(self, x):
-        return x * (self.max[None, :, None, None, None] - self.min[None, :, None, None, None]) + self.min
+        return x * (self.max[None, :, None, None, None] - self.min[None, :, None, None, None]) + self.min[None, :, None, None, None]
 
 
         

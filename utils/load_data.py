@@ -45,6 +45,7 @@ class EmulatorDataset(Dataset):
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{concept}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
+                dp = dp.sortby('time_counter')
                 dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
