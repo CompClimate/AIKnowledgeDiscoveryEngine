@@ -14,6 +14,8 @@ class EmulatorDataset(Dataset):
         self.features = try_cast(config['DATASET']['features'])
         self.concepts = try_cast(config['DATASET']['concepts'])
         self.labels = try_cast(config['DATASET']['labels'])
+        self.features_to_clip = try_cast(config['DATASET']['features_to_clip'])
+        self.concepts_to_clip = try_cast(config['DATASET']['concepts_to_clip'])
         self.opas = try_cast(config['DATASET']['members'])
         self.loc = config['DATASET']['location']
         self.window = config.getint('DATASET', 'context_window')
@@ -33,7 +35,7 @@ class EmulatorDataset(Dataset):
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
-            self.np_data[feat] = ds.to_array().values
+            self.np_data[feat] = ds.to_array().values.squeeze(0)
 
         self.np_concepts = {}
         for concept in self.concepts:
@@ -45,7 +47,7 @@ class EmulatorDataset(Dataset):
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
-            self.np_concepts[concept] = ds.to_array().values
+            self.np_concepts[concept] = ds.to_array().values.squeeze(0)
 
         self.np_labels = {}
         for label in self.labels:
@@ -57,23 +59,19 @@ class EmulatorDataset(Dataset):
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
-            self.np_labels[label] = ds.to_array().values
-        self._materialized = False
+            self.np_labels[label] = ds.to_array().values.squeeze(0)
 
-    def materialize(self):
-        """Extract numpy arrays from xarray for fast __getitem__."""
-        self._input_arrays = {}
-        for feat in self.features:
-            ds = self.lazy_data[feat]
-            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-            self._input_arrays[feat] = arr.squeeze(0)  # (n_members, n_timesteps, 302, 400)
+        # materialize
+        for feat in self.features_to_clip:
+            arr = self.np_data[feat]
+            p2 = np.nanpercentile(arr, 2)
+            p98 = np.nanpercentile(arr, 98)
+            arr = np.clip(arr, p2, p98)
+            self.np_data[feat] = arr
         print('materialized inputs')
 
-        self._concept_arrays = {}
-        for concept in self.concepts:
-            ds = self.lazy_concepts[concept]
-            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-            arr = arr.squeeze(0)
+        for concept in self.concepts_to_clip:
+            arr = self.np_concepts[concept]
             if concept == 'vori':
                 arr = np.where(arr > 0, np.log10(arr), np.nan)
                 print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
@@ -82,20 +80,8 @@ class EmulatorDataset(Dataset):
                 p98 = np.nanpercentile(arr, 98)
                 arr = np.clip(arr, p2, p98)
                 print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
-            self._concept_arrays[concept] = arr
+            self.np_concepts[concept] = arr
         print('materialized concepts')
-
-        self._label_arrays = {}
-        for label in self.labels:
-            ds = self.lazy_labels[label]
-            arr = ds.sel(y=slice(0, 302), x=slice(0, 400)).to_array().values
-            self._label_arrays[label] = arr.squeeze(0)
-        print('materialized labels')
-        # Free xarray data to avoid holding double the memory
-        self.lazy_data = {}
-        self.lazy_concepts = {}
-        self.lazy_labels = {}
-        self._materialized = True
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)
@@ -103,22 +89,10 @@ class EmulatorDataset(Dataset):
     def __getitem__(self, idx):
         member = idx % len(self.opas)
         time = idx // len(self.opas)
-        if self._materialized:
-            return self._getitem_fast(member, time)
         data = self.get_input_window(member, time)
         label = self.get_label(member, time)
         concept = self.get_concepts(member, time)
         return data, concept, label
-
-    # def _getitem_fast(self, member, time):
-    #     X = np.stack([self._input_arrays[f][member, time:time+self.window]
-    #                   for f in self.features])
-    #     cidx = [time + self.window - 1 + lead for lead in self.offset]
-    #     C = np.stack([self._concept_arrays[c][member, cidx]
-    #                   for c in self.concepts])
-    #     L = np.stack([self._label_arrays[l][member, cidx]
-    #                   for l in self.labels])
-    #     return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
     
     def date_range(self):
         start = datetime.strptime(self.start, "%Y%m")
@@ -135,16 +109,20 @@ class EmulatorDataset(Dataset):
         X_vars = []
         feature_idx = slice(time, time+self.window)
         for feat in self.features:
-            var_slice = self.np_data[feat][0][member][feature_idx]
+            var_slice = self.np_data[feat][member][feature_idx]
             X_vars.append(var_slice)
         X_vals = np.stack(X_vars)
         return torch.from_numpy(X_vals).float()
 
     def get_concepts(self, member, time):
+        climate_modes = try_cast(config['DATASET.LAG']['climate_modes'])
+        lag = config.getint('DATASET.LAG', 'lag')
         c_vars = []
         concept_idx = [time+self.window-1+lead for lead in self.offset]
         for concept in self.concepts:
-            concept_slice = self.np_concepts[concept][0][member][concept_idx]
+            if concept in climate_modes:
+                concept_idx = [time-lag for time in concept_idx]
+            concept_slice = self.np_concepts[concept][member][concept_idx]
             c_vars.append(concept_slice)
         c_vals = np.stack(c_vars)
         return torch.from_numpy(c_vals).float()
@@ -153,7 +131,7 @@ class EmulatorDataset(Dataset):
         l_vars = []
         label_idx = [time+self.window-1+lead for lead in self.offset]
         for label in self.labels:
-            label_slice = self.np_labels[label][0][member][label_idx]
+            label_slice = self.np_labels[label][member][label_idx]
             l_vars.append(label_slice)
         l_vals = np.stack(l_vars)
         return torch.from_numpy(l_vals).float()

@@ -6,8 +6,9 @@ from utils.load_data import EmulatorDataset
 from torch.utils.data import Subset
 from torch.utils.data import DataLoader
 from utils.get_config import config, try_cast
-from utils.compute_stats import Normalize
+from utils.compute_stats import ZScoreNormalize, MinMaxNormalize
 import torch
+import numpy as np
 import time
 import os
 
@@ -17,6 +18,9 @@ def get_dataset():
     print('dataset initialized', flush=True)
     n = len(dataset)
     print(f'dataset length: {n}', flush=True)
+    features = try_cast(config['DATASET']['features'])
+    concepts = try_cast(config['DATASET']['concepts'])
+    labels = try_cast(config['DATASET']['labels'])
     n_members = len(try_cast(config['DATASET']['members']))
     n_times = n // n_members
 
@@ -35,25 +39,34 @@ def get_dataset():
     test_set = Subset(dataset, test_idx)
     print('subsetting done', flush=True)
 
-    stats_loader = DataLoader(train_set, batch_size = 1, num_workers = 0, shuffle = False)
-    input_norm = Normalize(len(try_cast(config['DATASET']['features']))) 
-    concept_norm = Normalize(len(try_cast(config['DATASET']['concepts'])))
-    output_norm = Normalize(len(try_cast(config['DATASET']['labels'])))  
-    for i, (batch, concept_y, y) in enumerate(stats_loader):
-        B, C, T, Y, X = batch.shape
-        for c in range(C):               
-            input_norm.update(c, batch)           
-        B, F, T, Y, X = concept_y.shape
-        for f in range(F):
-            concept_norm.update(f, concept_y)
-        B, F, T, Y, X= y.shape
-        for f in range(F):
-            output_norm.update(f, y)
-    
-    input_norm.finalize()
-    concept_norm.finalize()
-    output_norm.finalize()
-    print('normalized', flush=True)
+    #TODO move norm type to config
+    input_norm = MinMaxNormalize() 
+    concept_norm = MinMaxNormalize()
+    output_norm = MinMaxNormalize()
+
+    X_vars = []
+    for feat in features:
+        print(feat)
+        var_slice = dataset.np_data[feat]
+        print(var_slice.shape)
+        X_vars.append(var_slice)
+    X_vals = np.stack(X_vars)
+
+    c_vars = []
+    for concept in concepts:
+        concept_slice = dataset.np_concepts[concept]
+        c_vars.append(concept_slice)
+    c_vals = np.stack(c_vars)
+
+    l_vars = []
+    for label in labels:
+        label_slice = dataset.np_labels[label]
+        l_vars.append(label_slice)
+    l_vals = np.stack(l_vars)
+
+    input_norm.fit(X_vals)
+    concept_norm.fit(c_vals)
+    output_norm.fit(l_vals)
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
