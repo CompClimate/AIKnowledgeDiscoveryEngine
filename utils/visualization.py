@@ -115,12 +115,12 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
     window = config.getint('DATASET', 'context_window')
     offsets = try_cast(config['DATASET']['offset'])
     n_members = len(try_cast(config['DATASET']['members']))
-    start_date = datetime.strptime(config['DATASET']['start'], "%Y%m")
-    end_date = datetime.strptime(config['DATASET']['end'], "%Y%m")
+    start_date = datetime.strptime(config['DATASET']['start'], "%Y-%m")
+    end_date = datetime.strptime(config['DATASET']['end'], "%Y-%m")
     dates = []
     cur = start_date
     while cur <= end_date:
-        dates.append(cur.strftime("%Y%m"))
+        dates.append(cur.strftime("%Y-%m"))
         cur += relativedelta(months=1)
     n_times = len(dates) - window - max(offsets) + 1
     train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)

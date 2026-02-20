@@ -32,6 +32,7 @@ class EmulatorDataset(Dataset):
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
+                dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
@@ -44,6 +45,7 @@ class EmulatorDataset(Dataset):
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{concept}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
+                dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
@@ -56,6 +58,7 @@ class EmulatorDataset(Dataset):
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{label}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
+                dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
@@ -95,8 +98,8 @@ class EmulatorDataset(Dataset):
         return data, concept, label
     
     def date_range(self):
-        start = datetime.strptime(self.start, "%Y%m")
-        end = datetime.strptime(self.end, "%Y%m")
+        start = datetime.strptime(self.start, "%Y-%m")
+        end = datetime.strptime(self.end, "%Y-%m")
 
         date_list = []
         cur_date = start
