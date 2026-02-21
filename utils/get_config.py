@@ -4,6 +4,7 @@ import ast
 import configparser
 import importlib
 import inspect
+import torch
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--config_file', required=True, help='Path to config file')
@@ -54,6 +55,12 @@ def get_optimizer(model):
     optimizer_params = parse_section('OPTIMIZER.HYPERPARAMETERS')
     optimizer = optimizer_class(model.parameters(), **optimizer_params)
     return optimizer
+
+def get_loss_fn(name, **kwargs):
+    if hasattr(torch.nn, name):
+        return getattr(torch.nn, name)()
+    import utils.losses as custom_losses
+    return getattr(custom_losses, name)(**kwargs)
 
 def get_scheduler(optimizer):
     module_name = config['SCHEDULER']['definition']  

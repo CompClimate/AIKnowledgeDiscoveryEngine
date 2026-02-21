@@ -4,6 +4,7 @@ from utils.get_data import get_dataset
 from utils.get_config import config
 import torch
 import time
+from inference import run_inference, threshold_analysis
 
 def run():
     start = time.time()
@@ -28,6 +29,8 @@ def run():
         print('testing done ', test_done - train_done)
     visualize()
     plot_sample(input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader)
+    run_inference()
+
 
 if __name__ == '__main__':
     run()

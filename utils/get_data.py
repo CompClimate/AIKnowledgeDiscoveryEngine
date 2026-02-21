@@ -9,13 +9,48 @@ from utils.get_config import config, try_cast
 from utils.compute_stats import ZScoreNormalize, MinMaxNormalize
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 import time
 import os
+
+def plot_data_histograms(X_vals, c_vals, output_dir='figs'):
+    """Plot histograms of all features, concepts, and climate modes after normalization."""
+    #os.makedirs(output_dir, exist_ok=True)
+    features      = try_cast(config['DATASET']['features'])
+    concepts      = try_cast(config['DATASET']['concepts'])
+    climate_modes = try_cast(config['DATASET.LAG']['climate_modes'])
+    colors = {'feature': 'tab:blue', 'climate_mode': 'tab:orange', 'concept': 'tab:green'}
+
+    all_vars = (
+        [(v, 'feature', X_vals[i])      for i, v in enumerate(features)] +
+        [(v, 'climate_mode' if v in climate_modes else 'concept', c_vals[i])
+         for i, v in enumerate(concepts)]
+    )
+
+    for var, kind, arr_raw in all_vars:
+        arr = arr_raw.flatten()
+        arr = arr[~np.isnan(arr)]
+
+        fig, ax = plt.subplots(figsize=(6, 4), layout='constrained')
+        ax.hist(arr, bins=100, color=colors[kind], alpha=0.8, edgecolor='none')
+        ax.set_title(f'{var}  [{kind.replace("_", " ")}]')
+        ax.set_xlabel('Normalized value')
+        ax.set_ylabel('Count')
+        ax.annotate(f'n={len(arr):,}\nmin={arr.min():.3g}\nmax={arr.max():.3g}\nμ={arr.mean():.3g}\nσ={arr.std():.3g}',
+                    xy=(0.98, 0.97), xycoords='axes fraction', fontsize=8,
+                    ha='right', va='top',
+                    bbox=dict(boxstyle='round', fc='white', alpha=0.7))
+
+        save_name = f'figs/hist_{var}.png'
+        fig.savefig(save_name, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f'  Saved {save_name}')
 
 def get_dataset():
     start_time = time.time()
     dataset = EmulatorDataset()
     print('dataset initialized', flush=True)
+
     n = len(dataset)
     print(f'dataset length: {n}', flush=True)
     features = try_cast(config['DATASET']['features'])
@@ -64,9 +99,11 @@ def get_dataset():
         l_vars.append(label_slice)
     l_vals = np.stack(l_vars)
 
-    input_norm.fit(X_vals)
-    concept_norm.fit(c_vals)
+    input_norm.fit(X_vals[:, :, :train_time_end])
+    concept_norm.fit(c_vals[:, :, :train_time_end])
     output_norm.fit(l_vals)
+
+    plot_data_histograms(X_vals, c_vals)
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
@@ -77,19 +114,4 @@ def get_dataset():
 
     return input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader
 
-if __name__ == "__main__":
-    # Run this once
-    input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
-
-    # This gets the path to /home/sansuri/
-    home_dir = os.path.expanduser("~") 
-    save_path = os.path.join(home_dir, 'normalization_stats.pt')
-
-    # Save the normalization objects
-    torch.save({
-        'input': input_norm,
-        'concept': concept_norm,
-        'output': output_norm
-    }, save_path)
-    
-    print(f"Stats saved successfully to: {save_path}")
+get_dataset()

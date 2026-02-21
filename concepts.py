@@ -11,9 +11,10 @@ import argparse
 import multiprocessing as mp
 from itertools import product
 import gsw
-from visualize import concept_viz, target_viz
 from scipy.ndimage import gaussian_filter
 import xgcm
+import warnings                                                                                                                                                  
+warnings.filterwarnings('ignore') 
 
 def mld_interface(year, month, member):
     path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
@@ -317,18 +318,8 @@ def wind_stress_curl(year, month, member):
     dtauxdy = grid.derivative(ds['sozotaux'], 'Y', boundary='fill')
     curl = dtauydx - dtauxdy
 
-    f_mask = mesh['fmaskutil']
-
-    ocean = f_mask.values == 1
-
-    curl_smooth = curl.copy()
-    curl_smooth.values[ocean] = gaussian_filter(
-        curl.values[ocean], 
-        sigma=5
-    )
-
     wsc_da = xr.DataArray(
-        curl_smooth[:, :, :, 0],  
+        curl[:, :, :, 0],  
         coords={
         'time_counter': ds_v['time_counter'].values,
         'nav_lat': (('y', 'x'), ds_v['nav_lat'].values),
@@ -337,6 +328,7 @@ def wind_stress_curl(year, month, member):
         dims=['time_counter', 'y', 'x'],
         name='sowsc' 
     )
+
     output_path = f'/quobyte/maikesgrp/sanah/concepts/sowsc/{member}'
     os.makedirs(output_path,  exist_ok=True)
     wsc_da.to_netcdf(f'{output_path}/sowsc_{year}{month}_F.nc')
@@ -344,21 +336,15 @@ def wind_stress_curl(year, month, member):
 def ekman_pumping(year, month, member):
     path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
 
-    ds_pt = xr.open_dataset(
-        f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc'
-    )
-    ds_sal = xr.open_dataset(
-        f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc'
-    )
+    ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
+    ds_sal = xr.open_dataset(f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_wsc = xr.open_dataset(
         f'/quobyte/maikesgrp/sanah/concepts/sowsc/{member}/sowsc_{year}{month}_F.nc'
     )
     mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
 
     # mixed-layer interface indices
-    ds_interface = xr.open_dataset(
-        f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc'
-    )
+    ds_interface = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
     above_idx = ds_interface['mxl_interface'].values[0, :, :]
     below_idx = above_idx + 1
 
@@ -377,12 +363,7 @@ def ekman_pumping(year, month, member):
     depth_below = depths[below_idx]
 
     # density at MLD base
-    rho_below = rho(
-        sal_below,
-        pt_below,
-        depth_below,
-        ds_pt['nav_lat'].values
-    )
+    rho_below = rho(sal_below,pt_below,depth_below,ds_pt['nav_lat'].values)
 
     # coriolis parameter
     ff = mesh['ff'].values[0, :, :]
@@ -624,7 +605,107 @@ def mlhc(year, month, member):
     os.makedirs(output_path, exist_ok=True)
     mlhc_da.to_netcdf(f'{output_path}/vomlhc_{year}{month}_T.nc')
 
+def vozocrtx_ml(year, month, member):
+    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    ds_u = xr.open_dataset(f'{path}/vozocrtx/{member}/vozocrtx_ORAS5_1m_{year}{month}_grid_U_02.nc')
+    ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
+    mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
+    ds = ds_u.merge(
+        mesh[
+            [
+                # metrics
+                "e1u",
+                "e2u",
+                "e3t_0"
+            ]
+        ]
+    )
+    ds['e1u'] = ds['e1u'].rename({"t": "time_counter"})
+    ds['e2u'] = ds['e2u'].rename({"t": "time_counter"})
+    ds['e3t_0'] = ds['e3t_0'].rename({"z": "deptht", "t": "time_counter"})
+    # Build mask in numpy to avoid T-grid/U-grid coordinate alignment issues
+    zv_vals  = ds_u['vozocrtx'].values[0]        # (depth, y, x)
+    mld_vals = ds_mxl['somxl010'].values[0]      # (y, x)
+    depths   = ds_u['depthu'].values              # (depth,)
 
+    mask_np = depths[:, None, None] <= mld_vals[None, :, :]  # (depth, y, x)
+
+    # Build masked DataArray on U-grid coords only, then integrate over depthu
+    # Fill outside-ML levels with 0 (not NaN) so trapezoidal rule doesn't propagate NaN
+    zv_masked = xr.DataArray(
+        np.where(mask_np, zv_vals, 0.0),
+        dims=['depthu', 'y', 'x'],
+        coords={'depthu': depths}
+    )
+    zv_integrated = zv_masked.integrate('depthu')                      # (y, x)
+    mld_da = xr.DataArray(mld_vals, dims=['y', 'x'])
+    zv_mean = (zv_integrated / mld_da.where(mld_da > 0)).values       # (y, x)
+    zv_mean[mld_vals == 0] = np.nan
+
+    zv_da = xr.DataArray(
+        np.where(np.isnan(mld_vals), np.nan, zv_mean)[np.newaxis],
+        coords={
+            'time_counter': ds_u['time_counter'].values,
+            'nav_lat': (('y', 'x'), ds_u['nav_lat'].values),
+            'nav_lon': (('y', 'x'), ds_u['nav_lon'].values),
+        },
+        dims=['time_counter', 'y', 'x'],
+        name='vozocrtx_ml'
+    )
+    output_path = f'/quobyte/maikesgrp/sanah/concepts/vozocrtx_ml/{member}'
+    os.makedirs(output_path, exist_ok=True)
+    zv_da.to_netcdf(f'{output_path}/vozocrtx_ml_{year}{month}_U.nc')
+
+def vomecrty_ml(year, month, member):
+    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    ds_v = xr.open_dataset(f'{path}/vomecrty/{member}/vomecrty_ORAS5_1m_{year}{month}_grid_V_02.nc')
+    ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
+    mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
+    ds = ds_v.merge(
+        mesh[
+            [
+                # metrics
+                "e1v",
+                "e2v",
+                "e3t_0"
+            ]
+        ]
+    )
+    ds['e1v'] = ds['e1v'].rename({"t": "time_counter"})
+    ds['e2v'] = ds['e2v'].rename({"t": "time_counter"})
+    ds['e3t_0'] = ds['e3t_0'].rename({"z": "deptht", "t": "time_counter"})
+    # Build mask in numpy to avoid T-grid/U-grid coordinate alignment issues
+    mv_vals  = ds_v['vomecrty'].values[0]        # (depth, y, x)
+    mld_vals = ds_mxl['somxl010'].values[0]      # (y, x)
+    depths   = ds_v['depthv'].values              # (depth,)
+
+    mask_np = depths[:, None, None] <= mld_vals[None, :, :]  # (depth, y, x)
+
+    # Build masked DataArray on U-grid coords only, then integrate over depthu
+    # Fill outside-ML levels with 0 (not NaN) so trapezoidal rule doesn't propagate NaN
+    mv_masked = xr.DataArray(
+        np.where(mask_np, mv_vals, 0.0),
+        dims=['depthv', 'y', 'x'],
+        coords={'depthv': depths}
+    )
+    mv_integrated = mv_masked.integrate('depthv')                      # (y, x)
+    mld_da = xr.DataArray(mld_vals, dims=['y', 'x'])
+    mv_mean = (mv_integrated / mld_da.where(mld_da > 0)).values       # (y, x)
+    mv_mean[mld_vals == 0] = np.nan
+
+    mv_da = xr.DataArray(
+        np.where(np.isnan(mld_vals), np.nan, mv_mean)[np.newaxis],
+        coords={
+            'time_counter': ds_v['time_counter'].values,
+            'nav_lat': (('y', 'x'), ds_v['nav_lat'].values),
+            'nav_lon': (('y', 'x'), ds_v['nav_lon'].values),
+        },
+        dims=['time_counter', 'y', 'x'],
+        name='vomecrty_ml'
+    )
+    output_path = f'/quobyte/maikesgrp/sanah/concepts/vomecrty_ml/{member}'
+    os.makedirs(output_path, exist_ok=True)
+    mv_da.to_netcdf(f'{output_path}/vomecrty_ml_{year}{month}_V.nc')
 
 def plot_concept(year, month, concept_path, concept_name, plot_title, concept_label, log=False):
     ds = xr.open_dataset(concept_path)
@@ -761,10 +842,64 @@ def entrainment(year, month, member):
     # Corrected variable name from mlhc_da to he_da
     he_da.to_netcdf(f'{output_path}/vohfe_{year}{month}_T.nc')
 
+def vorticity(year, month, member):
+    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    ds_v = xr.open_dataset(f'{path}/vomecrty/{member}/vomecrty_ORAS5_1m_{year}{month}_grid_V_02.nc')
+    ds_u = xr.open_dataset(f'{path}/vozocrtx/{member}/vozocrtx_ORAS5_1m_{year}{month}_grid_U_02.nc')
+    ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
+    mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
+    print('loaded files', flush=True)
+
+    # Select at MLD using numpy (same pattern as vertical_shear/mld_interface)
+    mld_vals = ds_mxl['somxl010'].values[0]  # (y, x)
+    depthv = ds_v['depthv'].values
+    depthu = ds_u['depthu'].values
+    v_idx = np.abs(depthv[:, None, None] - mld_vals[None, :, :]).argmin(axis=0)
+    u_idx = np.abs(depthu[:, None, None] - mld_vals[None, :, :]).argmin(axis=0)
+    lat_idx, lon_idx = np.ogrid[:mld_vals.shape[0], :mld_vals.shape[1]]
+    v_at_mld = ds_v['vomecrty'].values[0, v_idx, lat_idx, lon_idx]  # (y, x)
+    u_at_mld = ds_u['vozocrtx'].values[0, u_idx, lat_idx, lon_idx]  # (y, x)
+    print('selected at MLD', flush=True)
+
+    # Build xgcm dataset for horizontal derivatives (same as wind_stress_curl)
+    v_da = xr.DataArray(v_at_mld[np.newaxis], dims=['time_counter', 'y_f', 'x_c'], name='v')
+    u_da = xr.DataArray(u_at_mld[np.newaxis], dims=['time_counter', 'y_c', 'x_f'], name='u')
+
+    ds = xr.Dataset({'v': v_da, 'u': u_da})
+    ds = ds.merge(mesh[["e2u", "e1v"]])
+    ds['e2u'] = ds['e2u'].rename({"y": "y_c", "x": "x_f"})
+    ds['e1v'] = ds['e1v'].rename({"y": "y_f", "x": "x_c"})
+
+    grid = xgcm.Grid(ds,
+        coords={'X': {'center': 'x_c', 'right': 'x_f'},
+                'Y': {'center': 'y_c', 'right': 'y_f'}},
+        metrics={('X',): ['e1v'], ('Y',): ['e2u']},
+        periodic=False, autoparse_metadata=False)
+    print('grid initialized', flush=True)
+
+    # vorticity = dv/dx - du/dy
+    zeta = (grid.derivative(ds.v, 'X', boundary='fill') -
+            grid.derivative(ds.u, 'Y', boundary='fill')).squeeze()
+    print('calculated vorticity', flush=True)
+
+    zeta_da = xr.DataArray(
+        zeta.values[np.newaxis, :, :],
+        coords={
+            'time_counter': ds_v['time_counter'].values,
+            'nav_lat': (('y', 'x'), mesh['nav_lat'].values),
+            'nav_lon': (('y', 'x'), mesh['nav_lon'].values),
+        },
+        dims=['time_counter', 'y', 'x'],
+        name='vovort'
+    )
+    output_path = f'/quobyte/maikesgrp/sanah/concepts/vovort/{member}'
+    os.makedirs(output_path, exist_ok=True)
+    zeta_da.to_netcdf(f'{output_path}/vovort_{year}{month}_F.nc')
+
 def run_task(args):
     yr, mn, mem = args
     try:
-        entrainment(yr, mn, mem)
+        vomecrty_ml(yr, mn, mem)
     except Exception as e:
         print(f"[ERROR] {yr}-{mn}-{mem}: {e}")
 

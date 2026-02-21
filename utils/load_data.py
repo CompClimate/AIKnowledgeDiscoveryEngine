@@ -32,6 +32,7 @@ class EmulatorDataset(Dataset):
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
+                dp = dp.sortby('time_counter')
                 dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
             ds = xr.concat(data, dim="opa")
@@ -65,27 +66,62 @@ class EmulatorDataset(Dataset):
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_labels[label] = ds.to_array().values.squeeze(0)
 
-        # materialize
+        self.preprocessing()
+
+    def preprocessing(self):
+        log_features = {'somxl010'}
+        log_concepts = {'vori', 'von2', 'vos2', 'vohfe'}
+        smooth_features = try_cast(config['DATASET']['smooth_features'])
+        smooth_concepts = try_cast(config['DATASET']['smooth_concepts'])
+        sigma = config.getfloat('DATASET', 'smooth_sigma')
+
         for feat in self.features_to_clip:
+            if feat not in self.np_data:
+                continue
             arr = self.np_data[feat]
+            if feat in log_features:
+                arr = np.log10(np.where(arr > 0, arr, np.nan))
             p2 = np.nanpercentile(arr, 2)
             p98 = np.nanpercentile(arr, 98)
             arr = np.clip(arr, p2, p98)
+            print(f'  {feat}: {"log10 + " if feat in log_features else ""}clipped to [{p2:.3g}, {p98:.3g}]')
+            if feat in smooth_features:
+                arr = self._smooth(arr, sigma)
+                print(f'  {feat}: smoothed sigma={sigma}')
             self.np_data[feat] = arr
-        print('materialized inputs')
+        print('preprocessed inputs')
 
         for concept in self.concepts_to_clip:
+            if concept not in self.np_concepts:
+                continue
             arr = self.np_concepts[concept]
-            if concept == 'vori':
-                arr = np.where(arr > 0, np.log10(arr), np.nan)
-                print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
-            elif concept in ('vohfe', 'von2', 'vos2'):
+            if concept in log_concepts:
+                arr = np.sign(arr) * np.log10(1 + np.abs(arr))
+                p2 = np.nanpercentile(arr, 2)
+                p98 = np.nanpercentile(arr, 98)
+                arr = np.clip(arr, p2, p98)
+                print(f'  {concept}: symlog + clipped to [{p2:.3g}, {p98:.3g}]')
+            else:
                 p2 = np.nanpercentile(arr, 2)
                 p98 = np.nanpercentile(arr, 98)
                 arr = np.clip(arr, p2, p98)
                 print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
+            if concept in smooth_concepts:
+                arr = self._smooth(arr, sigma)
+                print(f'  {concept}: smoothed sigma={sigma}')
             self.np_concepts[concept] = arr
-        print('materialized concepts')
+        print('preprocessed concepts')
+
+    def _smooth(self, arr, sigma):
+        """Apply gaussian smoothing over spatial dims (y, x) per member per timestep."""
+        out = arr.copy()
+        for m in range(arr.shape[0]):
+            for t in range(arr.shape[1]):
+                nan_mask = np.isnan(out[m, t])
+                out[m, t] = np.where(nan_mask, 0.0, out[m, t])
+                out[m, t] = gaussian_filter(out[m, t], sigma=sigma)
+                out[m, t][nan_mask] = np.nan
+        return out
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)

@@ -19,7 +19,10 @@ class PointwiseCBM(nn.Module):
             #nn.Sigmoid()  # concepts typically in [0,1]
         )
         
-        self.output_net = nn.Linear(n_concepts*output_dim, output_dim)
+        self.output_net = nn.Sequential(
+            nn.Linear(n_concepts*output_dim, output_dim),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
         B, V, T, Y, X = x.shape
@@ -162,13 +165,14 @@ class UNetCBM(nn.Module):
         # Concept prediction head
         self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Output head 
+        # Output head
         self.output_head = nn.Sequential(
             nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 32, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
+            nn.Sigmoid(),
         )
 
     def forward(self, x):

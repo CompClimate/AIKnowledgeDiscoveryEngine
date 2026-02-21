@@ -158,7 +158,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
         with torch.no_grad():
             output, concept_pred = model(data_gpu)
             epoch_results[epoch] = {
-                'pred': torch.sigmoid(output).cpu(),
+                'pred': output.cpu(),
                 'concept': concept_norm.denormalize(concept_pred.cpu()),
             }
         print(f'Forward pass epoch {epoch} done', flush=True)
@@ -234,9 +234,4 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
 
 
 if __name__ == "__main__":
-    visualize()
-    # eval_gt_concepts()
-    # plot_unet_pred()
-    # plot_unet_concept()
-    #plot_detailed_losses()
-    #plot_concept_timeseries()
+    plot_sample()

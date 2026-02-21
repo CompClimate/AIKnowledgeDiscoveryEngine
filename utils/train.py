@@ -48,10 +48,14 @@ def make_output_dir():
 def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     # Training loop
     n_epochs = config.getint('TRAINING', 'epochs')
-    concept_loss_fn = config['TRAINING']['concept_loss_fn']
-    concept_loss_fn = getattr(torch.nn, concept_loss_fn)()
-    out_loss_fn = config['TRAINING']['out_loss_fn']
-    out_loss_fn = getattr(torch.nn, out_loss_fn)()
+    concept_loss_fn = get_config.get_loss_fn(config['TRAINING']['concept_loss_fn'])
+    focal_kwargs = {}
+    if config['TRAINING']['out_loss_fn'] == 'FocalLoss':
+        focal_kwargs = {
+            'alpha': config.getfloat('TRAINING', 'focal_alpha'),
+            'gamma': config.getfloat('TRAINING', 'focal_gamma'),
+        }
+    out_loss_fn = get_config.get_loss_fn(config['TRAINING']['out_loss_fn'], **focal_kwargs)
     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
 
     model_type = config['MODEL']['type']
@@ -185,10 +189,14 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     return model, losses, val_losses
 
 def eval(input_norm, concept_norm, output_norm, model, test_loader):
-    concept_loss_fn = config['TRAINING']['concept_loss_fn']
-    concept_loss_fn = getattr(torch.nn, concept_loss_fn)()
-    out_loss_fn = config['TRAINING']['out_loss_fn']
-    out_loss_fn = getattr(torch.nn, out_loss_fn)()
+    concept_loss_fn = get_config.get_loss_fn(config['TRAINING']['concept_loss_fn'])
+    focal_kwargs = {}
+    if config['TRAINING']['out_loss_fn'] == 'FocalLoss':
+        focal_kwargs = {
+            'alpha': config.getfloat('TRAINING', 'focal_alpha'),
+            'gamma': config.getfloat('TRAINING', 'focal_gamma'),
+        }
+    out_loss_fn = get_config.get_loss_fn(config['TRAINING']['out_loss_fn'], **focal_kwargs)
     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
 
     concept_names = try_cast(config['DATASET']['concepts'])
