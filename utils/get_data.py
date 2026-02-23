@@ -74,10 +74,11 @@ def get_dataset():
     test_set = Subset(dataset, test_idx)
     print('subsetting done', flush=True)
 
-    #TODO move norm type to config
-    input_norm = MinMaxNormalize() 
-    concept_norm = MinMaxNormalize()
-    output_norm = MinMaxNormalize()
+    norm_type = config.get('TRAINING', 'norm_type', fallback='MinMax')
+    NormClass = ZScoreNormalize if norm_type == 'ZScore' else MinMaxNormalize
+    input_norm = NormClass()
+    concept_norm = NormClass()
+    output_norm = NormClass()
 
     X_vars = []
     for feat in features:
@@ -103,7 +104,7 @@ def get_dataset():
     concept_norm.fit(c_vals[:, :, :train_time_end])
     output_norm.fit(l_vals)
 
-    plot_data_histograms(X_vals, c_vals)
+    #plot_data_histograms(X_vals, c_vals)
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
@@ -114,4 +115,5 @@ def get_dataset():
 
     return input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader
 
-get_dataset()
+if __name__ == "__main__":
+    get_dataset()

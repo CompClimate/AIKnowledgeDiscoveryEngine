@@ -1,5 +1,5 @@
 from utils.train import train, eval, make_output_dir
-from utils.visualization import visualize, plot_sample
+from utils.visualization import visualize, plot_sample, plot_sample_pred_only
 from utils.get_data import get_dataset
 from utils.get_config import config
 import torch
@@ -29,6 +29,7 @@ def run():
         print('testing done ', test_done - train_done)
     visualize()
     plot_sample(input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader)
+    plot_sample_pred_only(input_norm=input_norm, val_loader=val_loader, thresholds=[0.5, 0.4, 0.3, 0.25])
     run_inference()
 
 

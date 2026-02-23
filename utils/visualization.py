@@ -172,22 +172,24 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
         gt = target_true[0, 0, time_step, :, :].cpu().numpy()
         gt_masked = np.ma.masked_where(land_mask, gt)
         axes[0].set_facecolor('white')
-        axes[0].imshow(gt_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal', origin='lower')
+        im0 = axes[0].imshow(gt_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal', origin='lower')
         axes[0].set_title("Ground Truth")
         axes[0].axis('on')
+        fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label('P(MLHC Event)')
 
         for i, epoch in enumerate(epochs_to_check):
             if epoch not in epoch_results:
                 continue
             pred_2d = epoch_results[epoch]['pred'][0, 0, time_step, :, :].numpy()
+            masked = np.ma.masked_where(land_mask, pred_2d)
+            vmin_p = float(np.nanmin(pred_2d))
+            vmax_p = float(np.nanmax(pred_2d))
             ax = axes[i + 1]
             ax.set_facecolor('white')
             ax.axis('on')
-            im = ax.imshow(np.ma.masked_where(land_mask, pred_2d), vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal', origin='lower')
+            im = ax.imshow(masked, vmin=vmin_p, vmax=vmax_p, cmap='RdYlBu_r', aspect='equal', origin='lower')
             ax.set_title(f"Epoch {epoch}")
-
-        cbar = fig.colorbar(im, ax=axes.tolist(), fraction=0.02, pad=0.02)
-        cbar.set_label('P(MLHC Event)')
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label('P(MLHC Event)')
         current_step = steps_mapping[time_step]
         target_month = target_dates[current_step]
         fig.suptitle(f'{model_type} Predictions: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
@@ -206,24 +208,27 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             gt = concept_true[0, ci, time_step, :, :].cpu().numpy()
             gt_masked = np.ma.masked_where(land_mask, gt)
             clean_arr = np.ma.filled(gt_masked.astype(float), np.nan)
-            vmin, vmax = np.nanpercentile(clean_arr, [2, 98])
+            vmin, vmax = np.nanmin(clean_arr), np.nanmax(clean_arr)
 
             axes[0].set_facecolor('white')
-            axes[0].imshow(gt_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax, origin='lower')
+            im0 = axes[0].imshow(gt_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax, origin='lower')
             axes[0].set_title("Ground Truth")
             axes[0].axis('on')
+            fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label(cname)
 
             for ei, epoch in enumerate(epochs_to_check):
                 if epoch not in epoch_results:
                     continue
                 pred_2d = epoch_results[epoch]['concept'][0, ci, time_step, :, :].numpy()
+                masked = np.ma.masked_where(land_mask, pred_2d)
+                clean = np.ma.filled(masked.astype(float), np.nan)
+                vmin_p, vmax_p = np.nanmin(clean), np.nanmax(clean)
                 ax = axes[ei + 1]
                 ax.set_facecolor('white')
                 ax.axis('on')
-                im = ax.imshow(np.ma.masked_where(land_mask, pred_2d), cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax, origin='lower')
+                im = ax.imshow(masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin_p, vmax=vmax_p, origin='lower')
                 ax.set_title(f"Epoch {epoch}")
-
-            cbar = fig.colorbar(im, ax=axes.tolist(), fraction=0.02, pad=0.02)
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(cname)
             current_step = steps_mapping[time_step]
             target_month = target_dates[current_step]
             fig.suptitle(f'{model_type} {cname.upper()}: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
@@ -232,6 +237,98 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             plt.close(fig)
             print(f'Saved {save_name}', flush=True)
 
+def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
+                          val_sample_idx=None, thresholds=[0.5, 0.4, 0.3, 0.25]):
+    """Plot binary prediction maps at multiple thresholds vs ground truth."""
+    if model_dir is None:
+        model_dir = find_output_dir()
+    if val_sample_idx is None:
+        val_sample_idx = config.getint('VISUALIZATION', 'val_sample_idx', fallback=1)
+
+    loc = config['DATASET']['location']
+    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    land_mask = (mask_2d == 0)
+
+    if input_norm is None or val_loader is None:
+        input_norm, _, _, _, val_loader, _ = get_dataset()
+    val_dataset = val_loader.dataset
+    data, _, target_true = val_dataset[val_sample_idx]
+    data = data.unsqueeze(0)
+    target_true = target_true.unsqueeze(0)
+
+    # Compute target dates
+    window = config.getint('DATASET', 'context_window')
+    offsets = try_cast(config['DATASET']['offset'])
+    n_members = len(try_cast(config['DATASET']['members']))
+    start_date = datetime.strptime(config['DATASET']['start'], "%Y-%m")
+    end_date = datetime.strptime(config['DATASET']['end'], "%Y-%m")
+    dates = []
+    cur = start_date
+    while cur <= end_date:
+        dates.append(cur.strftime("%Y-%m"))
+        cur += relativedelta(months=1)
+    n_times = len(dates) - window - max(offsets) + 1
+    train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)
+    train_end = train_time_end * n_members
+    original_idx = train_end + val_sample_idx
+    member = original_idx % n_members
+    time_idx = original_idx // n_members
+    target_dates = {off: dates[time_idx + window - 1 + off] for off in offsets}
+
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model_type = config['MODEL']['type']
+    model = get_model()
+    model.to(DEVICE)
+
+    checkpoints = sorted(glob.glob(f'{model_dir}/{model_type}_epoch*.pt'),
+                         key=lambda p: int(p.split('epoch')[-1].split('.')[0]))
+    if not checkpoints:
+        raise FileNotFoundError(f'No checkpoints found in {model_dir}')
+    checkpoint = torch.load(checkpoints[-1], map_location=DEVICE, weights_only=False)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    print(f'Loaded {checkpoints[-1]}', flush=True)
+
+    data_gpu = torch.nan_to_num(input_norm.normalize(data), nan=0.0).to(DEVICE)
+    with torch.no_grad():
+        output, _ = model(data_gpu)
+    pred = output.cpu().numpy()  # (1, 1, n_leads, Y, X)
+
+    cmap = ListedColormap(['#d0d0d0', '#d62728'])  # gray=no event, red=event
+    n_cols = 1 + len(thresholds)
+
+    for time_step, lead in enumerate(offsets):
+        fig, axes = plt.subplots(1, n_cols, figsize=(n_cols * 4, 3.5), layout='constrained')
+        for ax in axes:
+            ax.axis('off')
+
+        # Ground truth
+        gt = target_true[0, 0, time_step, :, :].numpy()
+        gt_masked = np.ma.masked_where(land_mask, gt)
+        gt_pos_rate = float(np.nanmean(gt_masked))
+        axes[0].set_facecolor('white')
+        axes[0].imshow(gt_masked, cmap=cmap, vmin=0, vmax=1, aspect='equal', origin='lower')
+        axes[0].set_title(f'Ground Truth\n({100*gt_pos_rate:.1f}% events)')
+        axes[0].axis('on')
+
+        pred_2d = pred[0, 0, time_step]  # (Y, X)
+        for i, thresh in enumerate(thresholds):
+            binary = np.ma.masked_where(land_mask, (pred_2d >= thresh).astype(float))
+            pred_pos_rate = float(np.nanmean(binary))
+            ax = axes[i + 1]
+            ax.set_facecolor('white')
+            ax.axis('on')
+            ax.imshow(binary, cmap=cmap, vmin=0, vmax=1, aspect='equal', origin='lower')
+            ax.set_title(f't={thresh}\n({100*pred_pos_rate:.1f}% predicted)')
+
+        target_month = target_dates[lead]
+        fig.suptitle(f'{model_type} Binary Predictions: Lead {lead}mo (target: {target_month}, opa{member})', fontsize=12)
+        save_name = f'{model_dir}/{model_type}_binary_lead{lead}.png'
+        fig.savefig(save_name, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        print(f'Saved {save_name}', flush=True)
+
 
 if __name__ == "__main__":
-    plot_sample()
+    plot_sample_pred_only(model_dir='/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.2_ep50_lr0.001_bs64_FocalLoss')

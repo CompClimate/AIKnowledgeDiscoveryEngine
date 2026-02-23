@@ -70,7 +70,8 @@ class EmulatorDataset(Dataset):
 
     def preprocessing(self):
         log_features = {'somxl010'}
-        log_concepts = {'vori', 'von2', 'vos2', 'vohfe'}
+        log_concepts = {'vori', 'von2', 'vos2'}  # always >= 0 (negatives → NaN, clipped away)
+        symlog_concepts = {'vohfe'}               # can be negative — use symlog
         smooth_features = try_cast(config['DATASET']['smooth_features'])
         smooth_concepts = try_cast(config['DATASET']['smooth_concepts'])
         sigma = config.getfloat('DATASET', 'smooth_sigma')
@@ -96,6 +97,12 @@ class EmulatorDataset(Dataset):
                 continue
             arr = self.np_concepts[concept]
             if concept in log_concepts:
+                arr = np.log10(np.where(arr > 0, arr, np.nan))
+                p2 = np.nanpercentile(arr, 2)
+                p98 = np.nanpercentile(arr, 98)
+                arr = np.clip(arr, p2, p98)
+                print(f'  {concept}: log10 + clipped to [{p2:.3g}, {p98:.3g}]')
+            elif concept in symlog_concepts:
                 arr = np.sign(arr) * np.log10(1 + np.abs(arr))
                 p2 = np.nanpercentile(arr, 2)
                 p98 = np.nanpercentile(arr, 98)

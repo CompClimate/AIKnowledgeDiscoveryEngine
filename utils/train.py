@@ -2,6 +2,7 @@
 # returns training loss and val loss
 
 from utils.get_data import get_dataset
+import time
 #from utils.compute_stats import compute_mean_std, FeatureStandardize
 import torch
 import importlib
@@ -28,8 +29,9 @@ def make_output_dir():
     lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
     bs = config.getint('DATASET', 'batch_size')
     loss = config['TRAINING']['out_loss_fn']
+    norm = config.get('TRAINING', 'norm_type', fallback='MinMax')
     model_type = config['MODEL']['type']
-    name = f"{model_type}_lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}"
+    name = f"{model_type}_lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}_{norm}"
     output = f"{base}/{name}"
     # Append version number if directory already exists
     if os.path.exists(output):
@@ -82,6 +84,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     per_concept_losses = {name: [] for name in concept_names}
     val_per_concept_losses = {name: [] for name in concept_names}
     for epoch in range(start_epoch, n_epochs):
+        epoch_start = time.time()
         print(DEVICE)
         model.train(True)
         train_loss_accum = 0
@@ -163,8 +166,9 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             else:
                 # Step the scheduler every epoch (for schedulers like StepLR)
                 scheduler.step()
+        epoch_time = time.time() - epoch_start
         if epoch % 5 == 0:
-            print(f"epoch: {epoch}; loss: {loss_mean:.5f}; val_loss: {val_loss_mean:.5f}")
+            print(f"epoch: {epoch}; loss: {loss_mean:.5f}; val_loss: {val_loss_mean:.5f}; time: {epoch_time:.1f}s")
             print(f"learning rate: {optimizer.param_groups[0]['lr']}")
         if epoch % config.getint('OUTPUT', 'n_epochs_between_checkpoints') == 0:
             #update to have model save with more detail
