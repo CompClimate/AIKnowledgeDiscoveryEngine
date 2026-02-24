@@ -705,6 +705,110 @@ def plot_concept_ensemble_ts(model_dir, split='val', n_members=5):
         print(f"Saved concept plot: {save_path}")
 
 
+def concept_inference(model_dir=None, input_norm=None, concept_norm=None, val_loader=None, output_dir=None):
+    """Evaluate concept predictions with MAE, RMSE and pattern correlation on validation set."""
+    if model_dir is None:
+        model_dir = find_output_dir()
+    if output_dir is None:
+        output_dir = model_dir
+
+    if input_norm is None or concept_norm is None or val_loader is None:
+        input_norm, concept_norm, _, _, val_loader, _ = get_dataset()
+
+    loc = config['DATASET']['location']
+    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    ocean_mask = mask_2d == 1
+
+    concept_names = try_cast(config['DATASET']['concepts'])
+    offsets = try_cast(config['DATASET']['offset'])
+    n_concepts = len(concept_names)
+    n_leads = len(offsets)
+
+    model = load_model(model_dir)
+
+    # (n_concepts, n_leads): lists of (B, Y, X) arrays
+    concept_preds   = [[[] for _ in range(n_leads)] for _ in range(n_concepts)]
+    concept_targets = [[[] for _ in range(n_leads)] for _ in range(n_concepts)]
+
+    print('Running concept inference on val set...')
+    with torch.no_grad():
+        for batch, concept_y, _ in val_loader:
+            batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
+            _, concept_pred = model(batch)
+            # concept_pred is in normalized space; denormalize to physical units
+            concept_pred = concept_norm.denormalize(concept_pred.cpu())  # (B, C, n_leads, Y, X)
+            # concept_y from loader is in raw (unnormalized) space
+
+            for ci in range(n_concepts):
+                for li in range(n_leads):
+                    concept_preds[ci][li].append(concept_pred[:, ci, li].numpy())    # (B, Y, X)
+                    concept_targets[ci][li].append(concept_y[:, ci, li].numpy())
+
+    for ci in range(n_concepts):
+        for li in range(n_leads):
+            concept_preds[ci][li]   = np.concatenate(concept_preds[ci][li],   axis=0)  # (N, Y, X)
+            concept_targets[ci][li] = np.concatenate(concept_targets[ci][li], axis=0)
+
+    # --- Global metrics ---
+    print('\n=== Concept Metrics (ocean pixels only) ===')
+    for ci, cname in enumerate(concept_names):
+        print(f'\n  {cname}:')
+        for li, lead in enumerate(offsets):
+            pp = concept_preds[ci][li][:, ocean_mask].flatten()
+            tt = concept_targets[ci][li][:, ocean_mask].flatten()
+            valid = ~np.isnan(tt) & ~np.isnan(pp)
+            pp, tt = pp[valid], tt[valid]
+
+            mae  = np.mean(np.abs(pp - tt))
+            rmse = np.sqrt(np.mean((pp - tt) ** 2))
+            # pattern correlation: per timestep spatial r, averaged over time (vectorized)
+            p_all = concept_preds[ci][li][:, ocean_mask]   # (N, ocean_pixels)
+            t_all = concept_targets[ci][li][:, ocean_mask]
+            p_m = np.nanmean(p_all, axis=1, keepdims=True)
+            t_m = np.nanmean(t_all, axis=1, keepdims=True)
+            p_d = p_all - p_m
+            t_d = t_all - t_m
+            num = np.nansum(p_d * t_d, axis=1)
+            denom = np.sqrt(np.nansum(p_d ** 2, axis=1) * np.nansum(t_d ** 2, axis=1))
+            pattern_corr = np.nanmean(np.where(denom > 0, num / denom, np.nan))
+
+            print(f'    Lead {lead}mo | MAE={mae:.4g}  RMSE={rmse:.4g}  PatCorr={pattern_corr:.4f}')
+
+    # --- Spatial correlation maps (one figure per concept) ---
+    print('\nSaving spatial correlation maps...')
+    for ci, cname in enumerate(concept_names):
+        fig, axes = plt.subplots(1, n_leads, figsize=(n_leads * 5, 4), layout='constrained')
+        if n_leads == 1:
+            axes = [axes]
+
+        for li, lead in enumerate(offsets):
+            pp = concept_preds[ci][li]   # (N, Y, X)
+            tt = concept_targets[ci][li]
+
+            # Vectorized Pearson r over time axis for all pixels at once
+            pp_m = np.nanmean(pp, axis=0, keepdims=True)
+            tt_m = np.nanmean(tt, axis=0, keepdims=True)
+            pp_d = pp - pp_m
+            tt_d = tt - tt_m
+            num = np.nansum(pp_d * tt_d, axis=0)
+            denom = np.sqrt(np.nansum(pp_d ** 2, axis=0) * np.nansum(tt_d ** 2, axis=0))
+            corr_map = np.where((denom > 0) & ocean_mask, num / denom, np.nan)
+
+            ax = axes[li]
+            im = ax.imshow(np.ma.masked_invalid(corr_map), cmap='RdYlGn',
+                           vmin=-1, vmax=1, origin='lower', aspect='equal')
+            ax.set_title(f'Lead {lead}mo', fontsize=10)
+            ax.axis('off')
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label('Pearson r')
+
+        fig.suptitle(f'Pattern Correlation — {cname}', fontsize=12)
+        path = f'{output_dir}/concept_corr_{cname}.png'
+        fig.savefig(path, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        print(f'  Saved {path}')
+
+
 if __name__ == '__main__':
     # paths = [
     # "/quobyte/maikesgrp/mlhc_cbm/runs_041326/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore",
