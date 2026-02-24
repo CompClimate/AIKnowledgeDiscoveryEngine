@@ -18,9 +18,8 @@ def find_output_dir():
     lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
     bs = config.getint('DATASET', 'batch_size')
     loss = config['TRAINING']['out_loss_fn']
-    norm = config.get('TRAINING', 'norm_type', fallback='MinMax')
     model_type = config['MODEL']['type']
-    name = f"{model_type}_lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}_{norm}"
+    name = f"{model_type}_lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}"
     pattern = f"{base}/{name}*"
     matches = sorted(glob.glob(pattern))
     if not matches:
@@ -31,9 +30,12 @@ def find_output_dir():
     return result
 
 
-def visualize():
-    output_dir = find_output_dir()
-    losses_path = f'{output_dir}/detailed_losses.pt'
+def visualize(model_dir=None, output_dir=None):
+    if model_dir is None:
+        model_dir = find_output_dir()
+    if output_dir is None:
+        output_dir = model_dir
+    losses_path = f'{model_dir}/detailed_losses.pt'
 
     data = torch.load(losses_path, weights_only=False)
     train_loss = data['loss']
@@ -89,6 +91,7 @@ def visualize():
     fig.savefig(f'{output_dir}/losses.png', dpi=300)
     plt.close(fig)
     print(f'Saved {output_dir}/losses.png', flush=True)
+
 
 def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=None, val_sample_idx=None, output_dir=None):
     """Plot prediction and concept maps for a validation sample across training epochs."""
@@ -236,10 +239,12 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             print(f'Saved {save_name}', flush=True)
 
 def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
-                          val_sample_idx=None, thresholds=[0.5, 0.4, 0.3, 0.25]):
+                          val_sample_idx=None, output_dir=None):
     """Plot binary prediction maps at multiple thresholds vs ground truth."""
     if model_dir is None:
         model_dir = find_output_dir()
+    if output_dir is None:
+        output_dir = model_dir
     if val_sample_idx is None:
         val_sample_idx = config.getint('VISUALIZATION', 'val_sample_idx', fallback=1)
 
@@ -322,7 +327,7 @@ def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
 
         target_month = target_dates[lead]
         fig.suptitle(f'{model_type} Binary Predictions: Lead {lead}mo (target: {target_month}, opa{member})', fontsize=12)
-        save_name = f'{model_dir}/{model_type}_binary_lead{lead}.png'
+        save_name = f'{output_dir}/{model_type}_binary_lead{lead}.png'
         fig.savefig(save_name, dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f'Saved {save_name}', flush=True)

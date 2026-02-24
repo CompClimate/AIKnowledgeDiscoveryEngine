@@ -30,9 +30,11 @@ def load_model(model_dir):
     return model
 
 
-def run_inference(model_dir=None):
+def run_inference(model_dir=None, output_dir=None):
     if model_dir is None:
         model_dir = find_output_dir()
+    if output_dir is None:
+        output_dir = model_dir
 
     input_norm, concept_norm, _, _, _, test_loader = get_dataset()
 
@@ -116,13 +118,13 @@ def run_inference(model_dir=None):
             ax.axis('off')
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    save_path = f'{model_dir}/skill_maps.png'
+    save_path = f'{output_dir}/skill_maps.png'
     fig.savefig(save_path, dpi=200, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved {save_path}')
 
     # --- Threshold analysis ---
-    threshold_analysis(pixel_preds, pixel_targets, ocean_mask, offsets, model_dir)
+    threshold_analysis(pixel_preds, pixel_targets, ocean_mask, offsets, output_dir)
 
 
 def threshold_analysis(pixel_preds, pixel_targets, ocean_mask, offsets, model_dir):
@@ -317,15 +319,13 @@ def concept_inference(model_dir=None, input_norm=None, concept_norm=None, val_lo
 
 
 if __name__ == '__main__':
-    # Run with config.ini set to norm_type = MinMax:
-    # MODEL_DIR = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_MinMax'
-    # Run with config.ini set to norm_type = ZScore:
-    MODEL_DIR = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_ZScore'
+    MODEL_DIR  = '/home/kkringel/temp/20260222_MLParch/maike_c+b_concepts_64_64_64/PointwiseCBM_lam0.5_ep50_lr0.001_bs64_BCELoss'
+    OUTPUT_DIR = '/quobyte/maikesgrp/mlhc_cbm/PointwiseCBM_02232026'
 
     input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
 
-    visualize()
-    plot_sample(model_dir=MODEL_DIR, input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader)
-    plot_sample_pred_only(model_dir=MODEL_DIR, input_norm=input_norm, val_loader=val_loader)
-    #run_inference(model_dir=MODEL_DIR)
-    concept_inference(model_dir=MODEL_DIR, input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader)
+    visualize(model_dir=MODEL_DIR, output_dir=OUTPUT_DIR)
+    plot_sample(model_dir=MODEL_DIR, input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader, output_dir=OUTPUT_DIR)
+    plot_sample_pred_only(model_dir=MODEL_DIR, input_norm=input_norm, val_loader=val_loader, output_dir=OUTPUT_DIR)
+    run_inference(model_dir=MODEL_DIR, output_dir=OUTPUT_DIR)
+    concept_inference(model_dir=MODEL_DIR, input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader, output_dir=OUTPUT_DIR)

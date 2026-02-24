@@ -15,6 +15,13 @@ class PointwiseCBM(nn.Module):
         self.concept_net = nn.Sequential(
             nn.Linear(n_features, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
             nn.Linear(hidden_dim, n_concepts*output_dim),
         )
         
