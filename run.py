@@ -6,6 +6,8 @@ import torch
 import time
 
 def run():
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(DEVICE)
     start = time.time()
     input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
     get_data_done = time.time()
