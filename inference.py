@@ -327,5 +327,5 @@ if __name__ == '__main__':
     visualize(model_dir=MODEL_DIR, output_dir=OUTPUT_DIR)
     plot_sample(model_dir=MODEL_DIR, input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader, output_dir=OUTPUT_DIR)
     plot_sample_pred_only(model_dir=MODEL_DIR, input_norm=input_norm, val_loader=val_loader, output_dir=OUTPUT_DIR)
-    run_inference(model_dir=MODEL_DIR, output_dir=OUTPUT_DIR)
     concept_inference(model_dir=MODEL_DIR, input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader, output_dir=OUTPUT_DIR)
+    run_inference(model_dir=MODEL_DIR, output_dir=OUTPUT_DIR)
