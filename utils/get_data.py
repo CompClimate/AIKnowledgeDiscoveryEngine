@@ -64,9 +64,10 @@ def get_dataset():
         l_vars.append(label_slice)
     l_vals = np.stack(l_vars)
 
-    input_norm.fit(X_vals)
-    concept_norm.fit(c_vals)
-    output_norm.fit(l_vals)
+    train_time = list(range(0, train_time_end))
+    input_norm.fit(X_vals[:, :, train_time])
+    concept_norm.fit(c_vals[:, :, train_time])
+    output_norm.fit(l_vals[:, :, train_time])
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
