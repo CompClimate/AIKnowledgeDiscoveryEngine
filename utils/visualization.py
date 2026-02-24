@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
+from matplotlib.colors import ListedColormap, TwoSlopeNorm
 import torch
 import os
 import xarray as xr
@@ -18,8 +18,9 @@ def find_output_dir():
     lr = config.getfloat('OPTIMIZER.HYPERPARAMETERS', 'lr')
     bs = config.getint('DATASET', 'batch_size')
     loss = config['TRAINING']['out_loss_fn']
+    norm = config.get('TRAINING', 'norm_type', fallback='MinMax')
     model_type = config['MODEL']['type']
-    name = f"{model_type}_lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}"
+    name = f"{model_type}_lam{lam}_ep{ep}_lr{lr}_bs{bs}_{loss}_{norm}"
     pattern = f"{base}/{name}*"
     matches = sorted(glob.glob(pattern))
     if not matches:
@@ -89,10 +90,12 @@ def visualize():
     plt.close(fig)
     print(f'Saved {output_dir}/losses.png', flush=True)
 
-def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=None, val_sample_idx=None):
+def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=None, val_sample_idx=None, output_dir=None):
     """Plot prediction and concept maps for a validation sample across training epochs."""
     if model_dir is None:
         model_dir = find_output_dir()
+    if output_dir is None:
+        output_dir = model_dir
     if val_sample_idx is None:
         val_sample_idx = config.getint('VISUALIZATION', 'val_sample_idx', fallback=1)
     concepts = try_cast(config['DATASET']['concepts'])
@@ -148,7 +151,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
     # Cache forward pass results per epoch (so we don't re-run for each concept/lead)
     epoch_results = {}
     for epoch in epochs_to_check:
-        checkpoint_path = f'{model_dir}/{model_type}_epoch{epoch}.pt'
+        checkpoint_path = f'{model_dir}/{model_type}_epoch{epoch}.pt' # CHANGE THIS BACK
         if not os.path.exists(checkpoint_path):
             print(f'Checkpoint not found: {checkpoint_path}', flush=True)
             continue
@@ -193,7 +196,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
         current_step = steps_mapping[time_step]
         target_month = target_dates[current_step]
         fig.suptitle(f'{model_type} Predictions: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
-        save_name = f'{model_dir}/{model_type}_pred_lead{current_step}.png'
+        save_name = f'{output_dir}/{model_type}_pred_lead{current_step}.png'
         fig.savefig(save_name, dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f'Saved {save_name}', flush=True)
@@ -232,7 +235,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             current_step = steps_mapping[time_step]
             target_month = target_dates[current_step]
             fig.suptitle(f'{model_type} {cname.upper()}: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
-            save_name = f'{model_dir}/{model_type}_{cname}_lead{current_step}.png'
+            save_name = f'{output_dir}/{model_type}_{cname}_lead{current_step}.png'
             fig.savefig(save_name, dpi=200, bbox_inches='tight')
             plt.close(fig)
             print(f'Saved {save_name}', flush=True)
@@ -296,10 +299,12 @@ def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
     pred = output.cpu().numpy()  # (1, 1, n_leads, Y, X)
 
     cmap = ListedColormap(['#d0d0d0', '#d62728'])  # gray=no event, red=event
-    n_cols = 1 + len(thresholds)
 
     for time_step, lead in enumerate(offsets):
-        fig, axes = plt.subplots(1, n_cols, figsize=(n_cols * 4, 3.5), layout='constrained')
+        pred_2d = pred[0, 0, time_step]  # (Y, X)
+        thresh = (float(np.nanmin(pred_2d)) + float(np.nanmax(pred_2d))) / 2
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 3.5), layout='constrained')
         for ax in axes:
             ax.axis('off')
 
@@ -312,15 +317,13 @@ def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
         axes[0].set_title(f'Ground Truth\n({100*gt_pos_rate:.1f}% events)')
         axes[0].axis('on')
 
-        pred_2d = pred[0, 0, time_step]  # (Y, X)
-        for i, thresh in enumerate(thresholds):
-            binary = np.ma.masked_where(land_mask, (pred_2d >= thresh).astype(float))
-            pred_pos_rate = float(np.nanmean(binary))
-            ax = axes[i + 1]
-            ax.set_facecolor('white')
-            ax.axis('on')
-            ax.imshow(binary, cmap=cmap, vmin=0, vmax=1, aspect='equal', origin='lower')
-            ax.set_title(f't={thresh}\n({100*pred_pos_rate:.1f}% predicted)')
+        # Binary prediction at midpoint threshold
+        binary = np.ma.masked_where(land_mask, (pred_2d >= thresh).astype(float))
+        pred_pos_rate = float(np.nanmean(binary))
+        axes[1].set_facecolor('white')
+        axes[1].axis('on')
+        axes[1].imshow(binary, cmap=cmap, vmin=0, vmax=1, aspect='equal', origin='lower')
+        axes[1].set_title(f'Prediction (t={thresh:.3f})\n({100*pred_pos_rate:.1f}% predicted)')
 
         target_month = target_dates[lead]
         fig.suptitle(f'{model_type} Binary Predictions: Lead {lead}mo (target: {target_month}, opa{member})', fontsize=12)
@@ -331,4 +334,4 @@ def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
 
 
 if __name__ == "__main__":
-    plot_sample_pred_only(model_dir='/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.2_ep50_lr0.001_bs64_FocalLoss')
+    plot_sample(model_dir='/home/kkringel/temp/20260222_MLParch/maike_c+b_concepts_64_64_64/PointwiseCBM_lam0.5_ep50_lr0.001_bs64_BCELoss')
