@@ -726,23 +726,21 @@ def plot_mxl(n, log=False):
     plt.savefig('mxl')
 
 def entrainment(year, month, member):
-    # 1. Open datasets
+    # open datasets
     ds_tend = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_tendency/{member}/mxl_tendency_{year}{month}_T.nc')
     ds_diff = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/votempdiff/{member}/votempdiff_{year}{month}_T.nc')
     
     rho = 1026.0
     cp = 3990.0
     
-    # 2. Extract the specific variables for math
-    # Use .values or ensure they are both DataArrays to avoid Dataset-alignment errors
-    # Also: Apply the 'deepening only' logic (mxl_tend > 0)
+    # using ch 10 niiler and krauss
     tendency_ms = ds_tend['mxl_tend']
     we = xr.where(tendency_ms > 0, tendency_ms, 0)
     
-    # Calculate Heat Entrainment (W/m^2)
+    # calculate heat entrainment (W/m^2)
     he = rho * cp * we * ds_diff['votempdiff']
     
-    # 3. Create DataArray
+    # create da
     he_da = xr.DataArray(
         he.values, # Use .values to ensure we are passing the data matrix
         coords={
@@ -754,11 +752,11 @@ def entrainment(year, month, member):
         name='vohfe'
     )
     
-    # 4. Save
+    # save
     output_path = f'/quobyte/maikesgrp/sanah/concepts/vohfe/{member}'
     os.makedirs(output_path, exist_ok=True)
     
-    # Corrected variable name from mlhc_da to he_da
+    # corrected variable name from mlhc_da to he_da
     he_da.to_netcdf(f'{output_path}/vohfe_{year}{month}_T.nc')
 
 def run_task(args):

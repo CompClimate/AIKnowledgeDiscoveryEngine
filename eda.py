@@ -364,9 +364,32 @@ def plot_preprocessing_maps(vars, member='opa0',
         plt.close(fig)
         print(f'Saved {save_name}')
 
+def individual_analysis(var='vohfe', loc='/quobyte/maikesgrp/sanah/na_crop_latest'):
+    mask_ds = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+    ocean_mask = mask_ds['tmaskutil'].isel(t=0).isel(y=slice(0, 302), x=slice(0, 400)).values == 1
+
+    fig, axes = plt.subplots(1, 5, figsize=(20, 3), layout='constrained')
+    for i in range(5):
+        ds = xr.open_zarr(f'{loc}/opa{i}/{var}_na.zarr')
+        arr = ds[var].isel(y=slice(0, 302), x=slice(0, 400), time_counter=slice(0, None, 10)).values.astype(float)
+        arr[:, ~ocean_mask] = np.nan
+        vals = arr[~np.isnan(arr)].ravel()
+        symlog_vals = np.sign(vals) * np.log10(1 + np.abs(vals))
+        axes[i].hist(symlog_vals, bins=100, edgecolor='none')
+        axes[i].set_title(f'opa{i}')
+
+    fig.suptitle(f'{var} — symlog')
+    fig.savefig(f'{var}_hist_symlog.png', dpi=150)
+    print(f'saved {var}_hist_symlog.png')
+
 
 if __name__ == "__main__":
-    vars = ['vozocrtx_ml', 'vomecrty_ml']
-    plot_var_eda(vars)
+    individual_analysis(var='vohfe')
+    breakpoint()
+    vars = ['vori', 'vos2', 'von2', 'vovort', 'vozocrtx_ml', 'vomecrty_ml']
+    for var in vars:
+        individual_analysis(var=var)
+    #vars = ['vozocrtx_ml', 'vomecrty_ml']
+    #plot_var_eda(vars)
     #plot_member_comparison(vars)  
     #plot_preprocessing_maps(['vori', 'von2', 'vos2'], member='opa0')

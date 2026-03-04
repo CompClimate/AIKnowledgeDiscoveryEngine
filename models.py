@@ -162,14 +162,15 @@ class UNetCBM(nn.Module):
         # Concept prediction head
         self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Output head 
-        self.output_head = nn.Sequential(
-            nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 32, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
-        )
+        # Output head: linear map over concepts per pixel (1x1 conv = pointwise linear)
+        self.output_head = nn.Conv2d(n_concepts * output_dim, output_dim, kernel_size=1)
+        # self.output_head = nn.Sequential(
+        #     nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(64, 32, kernel_size=3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
+        # )
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)

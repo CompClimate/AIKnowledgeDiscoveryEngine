@@ -145,8 +145,9 @@ class EmulatorDataset(Dataset):
         return torch.from_numpy(X).float(), torch.from_numpy(C).float(), torch.from_numpy(L).float()
     
     def date_range(self):
-        start = datetime.strptime(self.start, "%Y%m")
-        end = datetime.strptime(self.end, "%Y%m")
+        fmt = "%Y-%m" if '-' in self.start else "%Y%m"
+        start = datetime.strptime(self.start, fmt)
+        end = datetime.strptime(self.end, fmt)
 
         date_list = []
         cur_date = start
