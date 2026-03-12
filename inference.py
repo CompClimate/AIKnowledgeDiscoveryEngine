@@ -76,7 +76,11 @@ def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
     with torch.no_grad():
         for batch, concept_y, y in full_loader:
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
+<<<<<<< HEAD
             pred, cpred, *_ = model(batch)
+=======
+            pred, cpred, _ = model(batch)
+>>>>>>> 2efb97f (mergin free concept and regression)
             pred = (pred * mask_tensor).cpu()
             preds.append(pred[:, 0, 0])
             targets.append(output_norm.normalize(y).numpy()[:, 0, 0])

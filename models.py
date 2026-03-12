@@ -181,6 +181,7 @@ class UNetCBM(nn.Module):
         if n_free_concepts > 0:
             self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
 
+<<<<<<< HEAD
         # output head: linear combination of supervised + free concepts
         total_concept_channels = (n_concepts + n_free_concepts) * output_dim
         self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
@@ -206,6 +207,11 @@ class UNetCBM(nn.Module):
         #     nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
         # )
 >>>>>>> 50327a8 (turning everything to regression)
+=======
+        # Output head: linear combination of all concepts (1x1 conv = pointwise linear)
+        total_concept_channels = (n_concepts + n_free_concepts) * output_dim
+        self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
+>>>>>>> 2efb97f (mergin free concept and regression)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
