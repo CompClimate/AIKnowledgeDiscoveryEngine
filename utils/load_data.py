@@ -11,6 +11,7 @@ xr.set_options(use_new_combine_kwarg_defaults=True)
 
 class EmulatorDataset(Dataset):
     def __init__(self):
+        print('loading...')
         self.features = try_cast(config['DATASET']['features'])
         self.concepts = try_cast(config['DATASET']['concepts'])
         self.labels = try_cast(config['DATASET']['labels'])
@@ -24,39 +25,47 @@ class EmulatorDataset(Dataset):
         self.end = config['DATASET']['end']
         self.file_details = try_cast(config['DATASET.FILEDETAILS']['inputs'])
         self.concept_details = try_cast(config['DATASET.FILEDETAILS']['concepts'])
+        print('got config details')
 
         self.np_data = {}
         for feat in self.features:
             data = []
             for opa in self.opas:
+                print('in opa!')
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
                 dp = dp.sortby('time_counter')
                 dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
+            print('out of opa')
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_data[feat] = ds.to_array().values.squeeze(0)
-
+            print(f'done {feat}')
+        print('features done')
         self.np_concepts = {}
         for concept in self.concepts:
             data = []
             for opa in self.opas:
+                print('in opa')
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{concept}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
                 dp = dp.sortby('time_counter')
                 dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
+            print('out of opa')
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_concepts[concept] = ds.to_array().values.squeeze(0)
-
+            print(f'done {concept}')
+        print('concepts done')
         self.np_labels = {}
         for label in self.labels:
             data = []
             for opa in self.opas:
+                print('in opa')
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{label}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
@@ -65,50 +74,50 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_labels[label] = ds.to_array().values.squeeze(0)
-
+            print('out of opa')
+        print('labels done')
         self.preprocessing()
+        print('preprocessing done')
 
     def preprocessing(self):
         log_features = {'somxl010'}
-        log_concepts = {'vori', 'von2', 'vos2'}  # always >= 0 (negatives → NaN, clipped away)
-        symlog_concepts = {'vohfe'}               # can be negative — use symlog
+        log_concepts = {'vori', 'von2', 'vos2'}  # log10, no clipping
+        symlog_concepts = {'vohfe'}               # symlog, no clipping
         smooth_features = try_cast(config['DATASET']['smooth_features'])
         smooth_concepts = try_cast(config['DATASET']['smooth_concepts'])
         sigma = config.getfloat('DATASET', 'smooth_sigma')
 
-        for feat in self.features_to_clip:
+        for feat in self.features:
             if feat not in self.np_data:
                 continue
             arr = self.np_data[feat]
             if feat in log_features:
                 arr = np.log10(np.where(arr > 0, arr, np.nan))
-            p2 = np.nanpercentile(arr, 2)
-            p98 = np.nanpercentile(arr, 98)
-            arr = np.clip(arr, p2, p98)
-            print(f'  {feat}: {"log10 + " if feat in log_features else ""}clipped to [{p2:.3g}, {p98:.3g}]')
+                print(f'  {feat}: log10')
+            if feat in self.features_to_clip:
+                p2 = np.nanpercentile(arr, 2)
+                p98 = np.nanpercentile(arr, 98)
+                arr = np.clip(arr, p2, p98)
+                print(f'  {feat}: clipped to [{p2:.3g}, {p98:.3g}]')
             if feat in smooth_features:
                 arr = self._smooth(arr, sigma)
                 print(f'  {feat}: smoothed sigma={sigma}')
             self.np_data[feat] = arr
         print('preprocessed inputs')
 
-        for concept in self.concepts_to_clip:
+        for concept in self.concepts:
             if concept not in self.np_concepts:
                 continue
             arr = self.np_concepts[concept]
+            # Transform (applied regardless of clipping)
             if concept in log_concepts:
                 arr = np.log10(np.where(arr > 0, arr, np.nan))
-                p2 = np.nanpercentile(arr, 2)
-                p98 = np.nanpercentile(arr, 98)
-                arr = np.clip(arr, p2, p98)
-                print(f'  {concept}: log10 + clipped to [{p2:.3g}, {p98:.3g}]')
+                print(f'  {concept}: log10')
             elif concept in symlog_concepts:
                 arr = np.sign(arr) * np.log10(1 + np.abs(arr))
-                p2 = np.nanpercentile(arr, 2)
-                p98 = np.nanpercentile(arr, 98)
-                arr = np.clip(arr, p2, p98)
-                print(f'  {concept}: symlog + clipped to [{p2:.3g}, {p98:.3g}]')
-            else:
+                print(f'  {concept}: symlog')
+            # Clip only if requested
+            if concept in self.concepts_to_clip:
                 p2 = np.nanpercentile(arr, 2)
                 p98 = np.nanpercentile(arr, 98)
                 arr = np.clip(arr, p2, p98)
@@ -119,16 +128,32 @@ class EmulatorDataset(Dataset):
             self.np_concepts[concept] = arr
         print('preprocessed concepts')
 
+        for label in self.labels:
+            if label not in self.np_labels:
+                continue
+            arr = self.np_labels[label]
+            arr = self._smooth(arr, sigma)
+            self.np_labels[label] = arr
+            print(f'  {label}: smoothed sigma={sigma}')
+
     def _smooth(self, arr, sigma):
-        """Apply gaussian smoothing over spatial dims (y, x) per member per timestep."""
-        out = arr.copy()
-        for m in range(arr.shape[0]):
-            for t in range(arr.shape[1]):
-                nan_mask = np.isnan(out[m, t])
-                out[m, t] = np.where(nan_mask, 0.0, out[m, t])
-                out[m, t] = gaussian_filter(out[m, t], sigma=sigma)
-                out[m, t][nan_mask] = np.nan
-        return out
+        """Apply gaussian smoothing over spatial dims (y, x) only."""
+        nan_mask = np.isnan(arr)
+        filled  = np.where(nan_mask, 0.0, arr)
+        weights = np.where(nan_mask, 0.0, 1.0)
+        smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
+        smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
+        return np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
+
+    def _smooth_binary(self, arr, sigma):
+        """Smooth binary labels over spatial dims only then re-threshold at 0.5."""
+        nan_mask = np.isnan(arr)
+        filled  = np.where(nan_mask, 0.0, arr).astype(float)
+        weights = np.where(nan_mask, 0.0, 1.0)
+        smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
+        smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
+        smoothed = np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
+        return np.where(nan_mask, np.nan, (smoothed >= 0.5).astype(float))
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)

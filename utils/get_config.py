@@ -58,7 +58,11 @@ def get_optimizer(model):
 
 def get_loss_fn(name, **kwargs):
     if hasattr(torch.nn, name):
-        return getattr(torch.nn, name)()
+        if name == 'BCEWithLogitsLoss':
+            pos_weight = config.getfloat('TRAINING', 'pos_weight', fallback=None)
+            if pos_weight is not None:
+                kwargs['pos_weight'] = torch.tensor([pos_weight]).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        return getattr(torch.nn, name)(**kwargs)
     import utils.losses as custom_losses
     return getattr(custom_losses, name)(**kwargs)
 

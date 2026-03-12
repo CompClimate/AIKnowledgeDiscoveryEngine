@@ -95,8 +95,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
         for batch, concept_y, y in train_loader:
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
-            #y = torch.nan_to_num(output_norm.normalize(y), nan=0.0) #use again if using real world values not anomaly
-            y = torch.nan_to_num(y, nan=0.0)
+            y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
             batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
             pred, concept_pred = model(batch)
@@ -135,8 +134,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             for val_batch, val_concept_y, val_y in val_loader:
                 val_batch = torch.nan_to_num(input_norm.normalize(val_batch), nan=0.0)
                 val_concept_y = torch.nan_to_num(concept_norm.normalize(val_concept_y), nan=0.0)
-                #val_y = torch.nan_to_num(output_norm.normalize(val_y), nan=0.0)
-                val_y = torch.nan_to_num(val_y, nan=0.0)
+                val_y = torch.nan_to_num(output_norm.normalize(val_y), nan=0.0)
                 val_batch, val_concept_y, val_y = val_batch.to(DEVICE), val_concept_y.to(DEVICE), val_y.to(DEVICE)
 
                 pred, concept_pred = model(val_batch)
@@ -216,8 +214,7 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
         for test_batch, concept_y, y in test_loader:
             test_batch = torch.nan_to_num(input_norm.normalize(test_batch), nan=0.0)
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
-            #y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
-            y = torch.nan_to_num(y, nan=0.0)
+            y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
             test_batch, concept_y, y = test_batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
             pred, concept_pred = model(test_batch)

@@ -3,15 +3,25 @@
 # if we want to parallelize in the future that would happen here
 print('in the file', flush=True)
 from utils.load_data import EmulatorDataset
+print('1', flush=True)
 from torch.utils.data import Subset
+print('1', flush=True)
 from torch.utils.data import DataLoader
+print('1', flush=True)
 from utils.get_config import config, try_cast
+print('1', flush=True)
 from utils.compute_stats import ZScoreNormalize, MinMaxNormalize
+print('1', flush=True)
 import torch
+print('1', flush=True)
 import numpy as np
+print('1', flush=True)
 import matplotlib.pyplot as plt
+print('1', flush=True)
 import time
+print('1', flush=True)
 import os
+print('imported everything', flush=True)
 
 def plot_data_histograms(X_vals, c_vals, output_dir='figs'):
     """Plot histograms of all features, concepts, and climate modes after normalization."""
@@ -47,6 +57,7 @@ def plot_data_histograms(X_vals, c_vals, output_dir='figs'):
         print(f'  Saved {save_name}')
 
 def get_dataset():
+    print('in get dataset', flush=True)
     start_time = time.time()
     dataset = EmulatorDataset()
     print('dataset initialized', flush=True)
@@ -102,7 +113,7 @@ def get_dataset():
 
     input_norm.fit(X_vals[:, :, :train_time_end])
     concept_norm.fit(c_vals[:, :, :train_time_end])
-    output_norm.fit(l_vals)
+    output_norm.fit(l_vals[:, :, :train_time_end])
 
     #plot_data_histograms(X_vals, c_vals)
 

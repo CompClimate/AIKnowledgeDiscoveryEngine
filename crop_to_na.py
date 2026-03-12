@@ -15,7 +15,6 @@ from scipy.ndimage import gaussian_filter
 import xgcm
 import calendar
 import pandas as pd
-import seaborn as sns
 import sys
 
 def crop_concept_to_zarr(
@@ -140,16 +139,16 @@ def crop_input_to_zarr(
 
 if __name__ == "__main__":
 
-    cell = 'T'
+    # cell = 'T'
     member = sys.argv[1]
     concept = sys.argv[2]
-    member = 'climate_modes'
-    concept = 'amo'
+    # member = 'climate_modes'
+    # concept = 'amo'
 
-    if concept in ['sowsc', 'voep']:
-        cell = 'F'
+    # if concept in ['sowsc', 'voep']:
+    #     cell = 'F'
 
-    grids = {'sometauy': 'V', 'sozotaux': 'U', 'sosaline': 'T', 'sosstsst': 'T', 'sohefldo': 'T', 
-            'somxl010': 'T'}
-    
-    crop_input_to_zarr(member, concept, grids[concept], years=range(1979, 2019))
+    # grids = {'sometauy': 'V', 'sozotaux': 'U', 'sosaline': 'T', 'sosstsst': 'T', 'sohefldo': 'T', 
+    #         'somxl010': 'T'}
+    crop_input_to_zarr(member, 'sossheig', 'T', years=range(1979, 2019))
+    #crop_concept_to_zarr(member, 'vomlhc', 'T', years=range(1979, 2019))

@@ -163,17 +163,25 @@ class UNetCBM(nn.Module):
         self.decoder = Decoder(decoder_channels[0], decoder_channels[1:], channels_list)
 
         # Concept prediction head
-        self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
+        #self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
+        self.concept_head = nn.Conv2d(channels_list[0], n_concepts, kernel_size=3, padding=1)
 
-        # Output head
+        # Output head: linear map over concepts per pixel (1x1 conv = pointwise linear)
+        # self.output_head = nn.Sequential(
+        #     nn.Conv2d(n_concepts * output_dim, output_dim, kernel_size=1),
+        #     nn.Sigmoid(),
+        # )
         self.output_head = nn.Sequential(
-            nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 32, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
-            nn.Sigmoid(),
+            nn.Conv2d(n_concepts, 1, kernel_size=1),
+            #nn.Sigmoid(),  # removed for regression (vomlhc)
         )
+        # self.output_head = nn.Sequential(
+        #     nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(64, 32, kernel_size=3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
+        # )
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
@@ -202,20 +210,20 @@ class UNetCBM(nn.Module):
         # Concept predictions
         concepts = self.concept_head(x)  # (B, n_concepts*output_dim, Y, X)
 
-        # Final output using concept maps
-        output = self.output_head(concepts)  # (B, output_dim, Y, X)
+        # Final output using concept maps (logits passed directly)
+        output = self.output_head(concepts)  # (B, 1, Y, X)
 
         # Crop to original spatial dimensions
         concepts = concepts[:, :, :Y, :X]
         output = output[:, :, :Y, :X]
 
         # Reshape to match PointwiseCBM output format
-        # concepts: (B, n_concepts*output_dim, Y, X) -> (B, n_concepts, output_dim, Y, X)
+        # concepts: (B, n_concepts, Y, X) -> (B, n_concepts, output_dim, Y, X)
         concepts = concepts.view(B, self.n_concepts, self.output_dim, Y, X)
-        
-        # output: (B, output_dim, Y, X) -> (B, 1, output_dim, Y, X) to match PointwiseCBM
+
+        # output: (B, 1, Y, X) -> (B, 1, output_dim, Y, X)
         output = output.unsqueeze(1)  # (B, 1, output_dim, Y, X)
-        
+
         return output, concepts
 
 def test_models_match():

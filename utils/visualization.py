@@ -90,7 +90,7 @@ def visualize():
     plt.close(fig)
     print(f'Saved {output_dir}/losses.png', flush=True)
 
-def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=None, val_sample_idx=None, output_dir=None):
+def plot_sample(model_dir=None, input_norm=None, concept_norm=None, output_norm=None, val_loader=None, val_sample_idx=None, output_dir=None):
     """Plot prediction and concept maps for a validation sample across training epochs."""
     if model_dir is None:
         model_dir = find_output_dir()
@@ -106,8 +106,8 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
     mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
     land_mask = (mask_2d == 0)
 
-    if input_norm is None or concept_norm is None or val_loader is None:
-        input_norm, concept_norm, _, _, val_loader, _ = get_dataset()
+    if input_norm is None or concept_norm is None or output_norm is None or val_loader is None:
+        input_norm, concept_norm, output_norm, _, val_loader, _ = get_dataset()
     val_dataset = val_loader.dataset
     data, concept_true, target_true = val_dataset[val_sample_idx]
     data = data.unsqueeze(0)
@@ -161,24 +161,26 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
         with torch.no_grad():
             output, concept_pred = model(data_gpu)
             epoch_results[epoch] = {
-                'pred': output.cpu(),
+                'pred': output_norm.denormalize(output.cpu()),
                 'concept': concept_norm.denormalize(concept_pred.cpu()),
             }
         print(f'Forward pass epoch {epoch} done', flush=True)
 
     # --- Prediction plots (one per lead time) ---
-    for time_step in range(3):
+    for time_step in range(len(try_cast(config['DATASET']['offset']))):
         fig, axes = plt.subplots(1, n_panels, figsize=(n_panels * 4, 3.5), layout='constrained')
         for ax in axes:
             ax.axis('off')
 
         gt = target_true[0, 0, time_step, :, :].cpu().numpy()
         gt_masked = np.ma.masked_where(land_mask, gt)
+        vmin_gt, vmax_gt = float(np.nanmin(gt)), float(np.nanmax(gt))
         axes[0].set_facecolor('white')
-        im0 = axes[0].imshow(gt_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal', origin='lower')
+        im0 = axes[0].imshow(gt_masked, vmin=vmin_gt, vmax=vmax_gt, cmap='RdYlBu_r', aspect='equal', origin='lower')
         axes[0].set_title("Ground Truth")
         axes[0].axis('on')
-        fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label('P(MLHC Event)')
+        label = try_cast(config['DATASET']['labels'])[0]
+        fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label(label)
 
         for i, epoch in enumerate(epochs_to_check):
             if epoch not in epoch_results:
@@ -192,7 +194,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             ax.axis('on')
             im = ax.imshow(masked, vmin=vmin_p, vmax=vmax_p, cmap='RdYlBu_r', aspect='equal', origin='lower')
             ax.set_title(f"Epoch {epoch}")
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label('P(MLHC Event)')
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(label)
         current_step = steps_mapping[time_step]
         target_month = target_dates[current_step]
         fig.suptitle(f'{model_type} Predictions: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
@@ -203,7 +205,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
 
     # --- Concept plots (one per concept per lead time) ---
     for ci, cname in enumerate(concepts):
-        for time_step in range(3):
+        for time_step in range(len(try_cast(config['DATASET']['offset']))):
             fig, axes = plt.subplots(1, n_panels, figsize=(n_panels * 4, 3.5), layout='constrained')
             for ax in axes:
                 ax.axis('off')
