@@ -173,6 +173,7 @@ class UNetCBM(nn.Module):
         decoder_channels = [channels_list[-1]] + channels_list[::-1]
         self.decoder = Decoder(decoder_channels[0], decoder_channels[1:], channels_list)
 
+<<<<<<< HEAD
         # supervised concept prediction head
         self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
 
@@ -183,6 +184,28 @@ class UNetCBM(nn.Module):
         # output head: linear combination of supervised + free concepts
         total_concept_channels = (n_concepts + n_free_concepts) * output_dim
         self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
+=======
+        # Concept prediction head
+        #self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
+        self.concept_head = nn.Conv2d(channels_list[0], n_concepts, kernel_size=3, padding=1)
+
+        # Output head: linear map over concepts per pixel (1x1 conv = pointwise linear)
+        # self.output_head = nn.Sequential(
+        #     nn.Conv2d(n_concepts * output_dim, output_dim, kernel_size=1),
+        #     nn.Sigmoid(),
+        # )
+        self.output_head = nn.Sequential(
+            nn.Conv2d(n_concepts, 1, kernel_size=1),
+            #nn.Sigmoid(),  # removed for regression (vomlhc)
+        )
+        # self.output_head = nn.Sequential(
+        #     nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(64, 32, kernel_size=3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
+        # )
+>>>>>>> 50327a8 (turning everything to regression)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
@@ -212,6 +235,7 @@ class UNetCBM(nn.Module):
         # Supervised concept predictions (UNet path only)
         concepts = self.concept_head(x)  # (B, n_concepts*output_dim, Y_padded, X_padded)
 
+<<<<<<< HEAD
         # Free concept predictions
         if self.n_free_concepts > 0:
             free = self.free_concept_head(x)  # (B, n_free*output_dim, Y, X)
@@ -223,6 +247,10 @@ class UNetCBM(nn.Module):
         output = self.output_head(all_concepts)
         pred_sup = output
         pred_free = None
+=======
+        # Final output using concept maps (logits passed directly)
+        output = self.output_head(concepts)  # (B, 1, Y, X)
+>>>>>>> 50327a8 (turning everything to regression)
 
         # Crop to original spatial dimensions
         concepts = concepts[:, :, :Y, :X]
@@ -231,10 +259,21 @@ class UNetCBM(nn.Module):
             pred_free = pred_free[:, :, :Y, :X]
         output = output[:, :, :Y, :X]
 
+<<<<<<< HEAD
         # Reshape supervised concepts
         concepts = concepts.view(B, self.n_concepts, self.output_dim, Y, X)
 
         output = output.unsqueeze(1)  # (B, 1, output_dim, Y, X)
+=======
+        # Reshape to match PointwiseCBM output format
+        # concepts: (B, n_concepts, Y, X) -> (B, n_concepts, output_dim, Y, X)
+        concepts = concepts.view(B, self.n_concepts, self.output_dim, Y, X)
+
+        # output: (B, 1, Y, X) -> (B, 1, output_dim, Y, X)
+        output = output.unsqueeze(1)  # (B, 1, output_dim, Y, X)
+
+        return output, concepts
+>>>>>>> 50327a8 (turning everything to regression)
 
         # Reshape free concepts if present
         if free is not None:
