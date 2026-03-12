@@ -3,6 +3,8 @@ import argparse
 import ast
 import configparser
 import importlib
+import inspect
+import torch
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--config_file', required=True, help='Path to config file')
@@ -29,13 +31,20 @@ def get_model():
     model_module = config['MODEL']['definition']
     module = importlib.import_module(model_module)
     ModelClass = getattr(module, model_type)
-    #nonlinearity?
-    model = ModelClass(
-        n_features=len(try_cast(config['DATASET']['features']))*config.getint('DATASET', 'context_window'),
-        n_concepts=len(try_cast(config['DATASET']['concepts'])),
-        hidden_dim=config.getint('MODEL.HYPERPARAMETERS', 'width'),
-        output_dim=len(try_cast(config['DATASET']['offset']))
-    )
+    sig = inspect.signature(ModelClass.__init__)
+    params = set(sig.parameters.keys()) - {'self'}
+
+    kwargs = {
+        'n_features': len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
+        'n_concepts': len(try_cast(config['DATASET']['concepts'])),
+        'output_dim': len(try_cast(config['DATASET']['offset'])),
+    }
+    if 'hidden_dim' in params:
+        kwargs['hidden_dim'] = config.getint('MODEL.HYPERPARAMETERS', 'width')
+    if 'channels_list' in params and config.has_option('MODEL.HYPERPARAMETERS', 'channels_list'):
+        kwargs['channels_list'] = try_cast(config['MODEL.HYPERPARAMETERS']['channels_list'])
+
+    model = ModelClass(**kwargs)
     return model
 
 def get_optimizer(model):
@@ -46,6 +55,16 @@ def get_optimizer(model):
     optimizer_params = parse_section('OPTIMIZER.HYPERPARAMETERS')
     optimizer = optimizer_class(model.parameters(), **optimizer_params)
     return optimizer
+
+def get_loss_fn(name, **kwargs):
+    if hasattr(torch.nn, name):
+        if name == 'BCEWithLogitsLoss':
+            pos_weight = config.getfloat('TRAINING', 'pos_weight', fallback=None)
+            if pos_weight is not None:
+                kwargs['pos_weight'] = torch.tensor([pos_weight]).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        return getattr(torch.nn, name)(**kwargs)
+    import utils.losses as custom_losses
+    return getattr(custom_losses, name)(**kwargs)
 
 def get_scheduler(optimizer):
     module_name = config['SCHEDULER']['definition']  
