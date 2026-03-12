@@ -170,22 +170,9 @@ class UNetCBM(nn.Module):
         if n_free_concepts > 0:
             self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Output head takes both supervised and free concepts
+        # Output head: linear combination of all concepts (1x1 conv = pointwise linear)
         total_concept_channels = (n_concepts + n_free_concepts) * output_dim
-        self.output_head = nn.Sequential(
-            nn.Conv2d(total_concept_channels, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 32, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
-        )
-        # self.output_head = nn.Sequential(
-        #     nn.Conv2d(n_concepts * output_dim, 64, kernel_size=3, padding=1),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(64, 32, kernel_size=3, padding=1),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(32, output_dim, kernel_size=3, padding=1),
-        # )
+        self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)

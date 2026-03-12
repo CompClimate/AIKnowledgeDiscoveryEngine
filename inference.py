@@ -68,7 +68,7 @@ def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
     with torch.no_grad():
         for batch, concept_y, y in full_loader:
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
-            pred, cpred = model(batch)
+            pred, cpred, _ = model(batch)
             pred = (pred * mask_tensor).cpu()
             pred = output_norm.denormalize(pred).numpy()
             cpred = concept_norm.denormalize(cpred.cpu())
@@ -216,11 +216,14 @@ def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
     concept_preds   = [[] for _ in range(n_concepts)]
     concept_targets = [[] for _ in range(n_concepts)]
 
+    n_free_concepts = config.getint('MODEL.HYPERPARAMETERS', 'n_free_concepts', fallback=0)
+    free_preds = [[] for _ in range(n_free_concepts)]
+
     print('Running val inference (lead 0 only)...')
     with torch.no_grad():
         for batch, concept_y, y in val_loader:
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
-            pred, cpred = model(batch)
+            pred, cpred, free = model(batch)
             pred = (pred * mask_tensor).cpu()
             pred = output_norm.denormalize(pred).numpy()    # (B, 1, n_leads, Y, X)
             cpred = concept_norm.denormalize(cpred.cpu())   # (B, n_concepts, n_leads, Y, X)
@@ -229,16 +232,20 @@ def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
             for ci in range(n_concepts):
                 concept_preds[ci].append(cpred[:, ci, 0].numpy())    # (B, Y, X)
                 concept_targets[ci].append(concept_y[:, ci, 0].numpy())
+            if free is not None:
+                for fi in range(n_free_concepts):
+                    free_preds[fi].append(free[:, fi, 0].cpu().numpy())
 
     preds   = np.concatenate(preds,   axis=0)   # (N, Y, X)
     targets = np.concatenate(targets, axis=0)
     for ci in range(n_concepts):
         concept_preds[ci]   = np.concatenate(concept_preds[ci],   axis=0)
         concept_targets[ci] = np.concatenate(concept_targets[ci], axis=0)
+    for fi in range(n_free_concepts):
+        free_preds[fi] = np.concatenate(free_preds[fi], axis=0)
 
     save_path = os.path.join(output_dir, 'val_preds_lead0.npz')
-    np.savez_compressed(
-        save_path,
+    save_dict = dict(
         preds=preds,
         targets=targets,
         ocean_mask=ocean_mask,
@@ -247,6 +254,9 @@ def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
         concept_targets=np.stack(concept_targets),  # (n_concepts, N, Y, X)
         concept_names=np.array(concept_names),
     )
+    if n_free_concepts > 0:
+        save_dict['free_preds'] = np.stack(free_preds)  # (n_free, N, Y, X)
+    np.savez_compressed(save_path, **save_dict)
     print(f'Saved {save_path}')
 
 

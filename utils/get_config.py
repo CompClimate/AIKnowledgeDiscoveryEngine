@@ -43,6 +43,8 @@ def get_model():
         kwargs['hidden_dim'] = config.getint('MODEL.HYPERPARAMETERS', 'width')
     if 'channels_list' in params and config.has_option('MODEL.HYPERPARAMETERS', 'channels_list'):
         kwargs['channels_list'] = try_cast(config['MODEL.HYPERPARAMETERS']['channels_list'])
+    if 'n_free_concepts' in params:
+        kwargs['n_free_concepts'] = config.getint('MODEL.HYPERPARAMETERS', 'n_free_concepts', fallback=0)
 
     model = ModelClass(**kwargs)
     return model
