@@ -166,13 +166,20 @@ class UNetCBM(nn.Module):
         # Supervised concept prediction head
         self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
 
+        # Skip connection: raw input → concept space (bypasses UNet) — REMOVED: caused concept heads to shortcut supervision
+        # self.concept_skip = nn.Conv2d(n_features, n_concepts * output_dim, kernel_size=1)
+
         # Free (unsupervised) concept head
         if n_free_concepts > 0:
             self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Output head: linear combination of all concepts (1x1 conv = pointwise linear)
+        # Output head: linear combination of all concepts (supervised + free)
         total_concept_channels = (n_concepts + n_free_concepts) * output_dim
         self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
+
+        # Residual free output head (commented out — using simple linear combination instead)
+        # if n_free_concepts > 0:
+        #     self.free_output_head = nn.Conv2d(n_free_concepts * output_dim, output_dim, kernel_size=1)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
@@ -193,27 +200,42 @@ class UNetCBM(nn.Module):
         # using reflect to maintain smoothness at boundary
         x = nn.functional.pad(x, (pad_top, pad_bottom, pad_left, pad_right), mode='reflect')
 
+
         # UNet forward pass
         x, skips = self.encoder(x)
         x = self.bottleneck(x)
         x = self.decoder(x, skips)
 
-        # Supervised concept predictions
-        concepts = self.concept_head(x)  # (B, n_concepts*output_dim, Y, X)
+        # Supervised concept predictions (UNet path only)
+        concepts = self.concept_head(x)  # (B, n_concepts*output_dim, Y_padded, X_padded)
 
         # Free concept predictions
         if self.n_free_concepts > 0:
             free = self.free_concept_head(x)  # (B, n_free*output_dim, Y, X)
             all_concepts = torch.cat([concepts, free], dim=1)
         else:
-            all_concepts = concepts
             free = None
+            all_concepts = concepts
 
-        # Final output using all concept maps
+        # Output: linear combination of all concepts (supervised + free)
         output = self.output_head(all_concepts)  # (B, output_dim, Y, X)
+        pred_sup = output  # no separation in simple mode
+        pred_free = None
+
+        # Residual free concept path (commented out)
+        # pred_sup = self.output_head(concepts)
+        # if free is not None:
+        #     pred_free = self.free_output_head(free)
+        #     output = pred_sup + pred_free
+        # else:
+        #     pred_free = None
+        #     output = pred_sup
 
         # Crop to original spatial dimensions
         concepts = concepts[:, :, :Y, :X]
+        pred_sup = pred_sup[:, :, :Y, :X]
+        if pred_free is not None:
+            pred_free = pred_free[:, :, :Y, :X]
         output = output[:, :, :Y, :X]
 
         # Reshape supervised concepts
@@ -226,7 +248,12 @@ class UNetCBM(nn.Module):
             free = free[:, :, :Y, :X]
             free = free.view(B, self.n_free_concepts, self.output_dim, Y, X)
 
-        return output, concepts, free
+        # Unsqueeze pred_sup/pred_free to match output's (B, 1, output_dim, Y, X) shape
+        pred_sup = pred_sup.unsqueeze(1)
+        if pred_free is not None:
+            pred_free = pred_free.unsqueeze(1)
+
+        return output, concepts, free, pred_sup, pred_free
 
 def test_models_match():
     """Test if PointwiseCBM and UNetCBM produce similar outputs"""
