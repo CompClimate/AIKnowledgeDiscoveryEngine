@@ -177,6 +177,7 @@ class UNetCBM(nn.Module):
         # supervised concept prediction head
         self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
 
+<<<<<<< HEAD
         # free (unsupervised) concept head
         if n_free_concepts > 0:
             self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
@@ -209,9 +210,23 @@ class UNetCBM(nn.Module):
 >>>>>>> 50327a8 (turning everything to regression)
 =======
         # Output head: linear combination of all concepts (1x1 conv = pointwise linear)
+=======
+        # Skip connection: raw input → concept space (bypasses UNet) — REMOVED: caused concept heads to shortcut supervision
+        # self.concept_skip = nn.Conv2d(n_features, n_concepts * output_dim, kernel_size=1)
+
+        # Free (unsupervised) concept head
+        if n_free_concepts > 0:
+            self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
+
+        # Output head: linear combination of all concepts (supervised + free)
+>>>>>>> 78e6114 (unet w free)
         total_concept_channels = (n_concepts + n_free_concepts) * output_dim
         self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
 >>>>>>> 2efb97f (mergin free concept and regression)
+
+        # Residual free output head (commented out — using simple linear combination instead)
+        # if n_free_concepts > 0:
+        #     self.free_output_head = nn.Conv2d(n_free_concepts * output_dim, output_dim, kernel_size=1)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
@@ -247,7 +262,9 @@ class UNetCBM(nn.Module):
             free = self.free_concept_head(x)  # (B, n_free*output_dim, Y, X)
         else:
             free = None
+            all_concepts = concepts
 
+<<<<<<< HEAD
         # Additive: free concept is extra linear channel in output head
         all_concepts = torch.cat([concepts, free], dim=1) if free is not None else concepts
         output = self.output_head(all_concepts)
@@ -257,6 +274,21 @@ class UNetCBM(nn.Module):
         # Final output using concept maps (logits passed directly)
         output = self.output_head(concepts)  # (B, 1, Y, X)
 >>>>>>> 50327a8 (turning everything to regression)
+=======
+        # Output: linear combination of all concepts (supervised + free)
+        output = self.output_head(all_concepts)  # (B, output_dim, Y, X)
+        pred_sup = output  # no separation in simple mode
+        pred_free = None
+
+        # Residual free concept path (commented out)
+        # pred_sup = self.output_head(concepts)
+        # if free is not None:
+        #     pred_free = self.free_output_head(free)
+        #     output = pred_sup + pred_free
+        # else:
+        #     pred_free = None
+        #     output = pred_sup
+>>>>>>> 78e6114 (unet w free)
 
         # Crop to original spatial dimensions
         concepts = concepts[:, :, :Y, :X]
@@ -290,6 +322,11 @@ class UNetCBM(nn.Module):
         pred_sup = pred_sup.unsqueeze(1)
         if pred_free is not None:
             pred_free = pred_free.unsqueeze(1)
+<<<<<<< HEAD
+=======
+
+        return output, concepts, free, pred_sup, pred_free
+>>>>>>> 78e6114 (unet w free)
 
         return output, concepts, free 
 
