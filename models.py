@@ -86,6 +86,7 @@ class Encoder(nn.Module):
             out_ch = channels[i + 1]
             self.conv_layers.append(
                 nn.Sequential(
+                    # single conv (original)
                     nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
@@ -124,6 +125,7 @@ class Decoder(nn.Module):
 
             self.conv_layers.append(
                 nn.Sequential(
+                    # single conv (original)
                     nn.Conv2d(out_ch + skip_ch, out_ch, 3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
@@ -224,9 +226,12 @@ class UNetCBM(nn.Module):
         self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
 >>>>>>> 2efb97f (mergin free concept and regression)
 
-        # Residual free output head (commented out — using simple linear combination instead)
-        # if n_free_concepts > 0:
-        #     self.free_output_head = nn.Conv2d(n_free_concepts * output_dim, output_dim, kernel_size=1)
+        # Residual free output head: separate head for free concepts, added to pred_sup
+        # Revert to additive (no residual): replace both heads with a single head over all concepts:
+        #   total_concept_channels = (n_concepts + n_free_concepts) * output_dim
+        #   self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
+        if n_free_concepts > 0:
+            self.free_output_head = nn.Conv2d(n_free_concepts * output_dim, output_dim, kernel_size=1)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
@@ -262,7 +267,6 @@ class UNetCBM(nn.Module):
             free = self.free_concept_head(x)  # (B, n_free*output_dim, Y, X)
         else:
             free = None
-            all_concepts = concepts
 
 <<<<<<< HEAD
         # Additive: free concept is extra linear channel in output head
