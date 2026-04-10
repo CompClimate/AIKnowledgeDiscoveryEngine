@@ -8,9 +8,11 @@ class ZScoreNormalize():
         self.std = None
 
     def fit(self, x):
+        print('in fit')
         self.mean = torch.from_numpy(np.nanmean(x, axis=(1, 2, 3, 4))).float()
         self.std = np.nanstd(x, axis=(1, 2, 3, 4))        
         self.std = torch.from_numpy(np.clip(self.std, a_min=1e-8, a_max=None)).float()
+        print('done fit')
 
     def normalize(self, x):
         return (x - self.mean[None, :, None, None, None]) / self.std[None, :, None, None, None]

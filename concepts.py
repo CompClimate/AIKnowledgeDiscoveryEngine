@@ -10,11 +10,12 @@ import os
 import argparse
 import multiprocessing as mp
 from itertools import product
-import gsw
+#import gsw
 from scipy.ndimage import gaussian_filter
 import xgcm
 import warnings                                                                                                                                                  
 warnings.filterwarnings('ignore') 
+import sys
 
 def mld_interface(year, month, member):
     path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
@@ -161,6 +162,44 @@ def heat_flux(year, month, member):
     output_path = f'/quobyte/maikesgrp/sanah/concepts/votempdiff/{member}'
     os.makedirs(output_path,  exist_ok=True)
     heat_flux_da.to_netcdf(f'{output_path}/votempdiff_{year}{month}_T.nc')
+
+def salinity_flux(year, month, member):
+    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    ds_pt = xr.open_dataset(f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc')
+    
+    ds_interface = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
+    above_idx = ds_interface['mxl_interface'].values[0, :, :]
+
+    # get data
+    depths = ds_pt['deptht'].values  # [depth]
+    pt = ds_pt['vosaline'].values[0, :, :, :]  # [depth, lat, lon]
+
+    below_idx = above_idx + 1
+
+    # pt[ld, lat, lon], pt[ud, lat, lon]
+    # for all points
+    lat_idx, lon_idx = np.ogrid[:above_idx.shape[0], :above_idx.shape[1]]
+    pt_below = pt[below_idx, lat_idx, lon_idx]
+    pt_above = pt[above_idx, lat_idx, lon_idx]
+
+    # salinity difference
+    sal_diff = np.abs(pt_below - pt_above)
+
+    # probably add more info abt the year and month?
+    heat_flux_da = xr.DataArray(
+        sal_diff[np.newaxis, :, :],  
+        coords={
+            'time_counter': ds_pt['time_counter'].values,
+            'nav_lat': (('y', 'x'), ds_pt['nav_lat'].values),
+            'nav_lon': (('y', 'x'), ds_pt['nav_lon'].values),
+        },
+        dims=['time_counter', 'y', 'x'],
+        name='vosaldiff' 
+    )
+
+    output_path = f'/quobyte/maikesgrp/sanah/concepts/vosaldiff/{member}'
+    os.makedirs(output_path,  exist_ok=True)
+    heat_flux_da.to_netcdf(f'{output_path}/vosaldiff_{year}{month}_T.nc')
 
 def rho(sal, temp, d, lat):
     p = sw.eos80.pres(d, lat)
@@ -896,46 +935,74 @@ def vorticity(year, month, member):
     os.makedirs(output_path, exist_ok=True)
     zeta_da.to_netcdf(f'{output_path}/vovort_{year}{month}_F.nc')
 
+def detrend(concept, mem):
+
+    fig, ax = plt.subplots()
+    concept_zarr = xr.open_zarr(f'/quobyte/maikesgrp/sanah/na_crop_latest/{mem}/{concept}_na.zarr')
+    concept_np = concept_zarr[concept].values 
+    ax.plot(np.nanmean(concept_np, axis=(1, 2)), label='unprocessed')
+    nan_mask = np.isnan(concept_np)
+    concept_np[nan_mask] = 0.0 
+    concept_detrend = sp.signal.detrend(concept_np, axis=0)
+    ax.plot(np.nanmean(concept_detrend, axis=(1, 2)), label='detrended')
+    concept_detrend[nan_mask] = np.nan
+    ds_detrend = xr.Dataset(
+        {concept: (concept_zarr[concept].dims, concept_detrend)},
+        coords = concept_zarr[concept].coords
+    )
+    save_path = f'/quobyte/maikesgrp/sanah/na_crop_detrended/{mem}/{concept}_na.zarr'
+    os.makedirs(save_path, exist_ok=True)
+    ds_detrend.to_zarr(save_path, mode='w')
+    fig.legend()
+    fig.savefig(f'/quobyte/maikesgrp/sanah/na_crop_detrended/{mem}/{concept}_viz.png')
+    print(f'saved {mem} {concept}', flush=True)
+
 def run_task(args):
     yr, mn, mem = args
     try:
-        vomecrty_ml(yr, mn, mem)
+        salinity_flux(yr, mn, mem)
     except Exception as e:
         print(f"[ERROR] {yr}-{mn}-{mem}: {e}")
 
 if __name__ == "__main__":
-    # ---- Parse command-line arguments ----
-    parser = argparse.ArgumentParser(description="Run MLD interface calculations in parallel.")
-    parser.add_argument("--member", type=str, default=None,
-                        help="Specific ensemble member to process (e.g., opa0)")
-    parser.add_argument("--year", type=int, default=None,
-                        help="Specific year to run")
+    #detrend('vozocrtx_ml')
+    concepts_3 = ['sossheig', 'sowsc', 'vozocrtx_ml', 'vomecrty_ml', 'voep', 'vovort', 'mxl_tendency']
+    concepts_2 = ['sosaline', 'sosstsst', 'somxl010', 'sohefldo', 'vori', 'von2', 'vos2', 'vohfe']
+    concept = sys.argv[1]                                                                                                                                                    
+    mem = sys.argv[2]                                                                                                                                                        
+    detrend(concept, mem)
+    # # ---- Parse command-line arguments ----
+    # parser = argparse.ArgumentParser(description="Run MLD interface calculations in parallel.")
+    # parser.add_argument("--member", type=str, default=None,
+    #                     help="Specific ensemble member to process (e.g., opa0)")
+    # parser.add_argument("--year", type=int, default=None,
+    #                     help="Specific year to run")
 
-    args = parser.parse_args()
+    # args = parser.parse_args()
     
-    # Will iterate over year, member pairs -> 40*5 = 200 iterations
+    # # Will iterate over year, member pairs -> 40*5 = 200 iterations
 
-    # ---- Define parameter ranges ----
-    years = [str(y) for y in range(1979, 2019)]
-    # years = [1979]
-    months = [f"{m:02d}" for m in range(1, 13)]
-    members = ['opa0', 'opa1', 'opa2', 'opa3', 'opa4']
+    # # ---- Define parameter ranges ----
+    # years = [str(y) for y in range(1979, 2019)]
+    # # years = [1979]
+    # months = [f"{m:02d}" for m in range(1, 13)]
+    # members = ['opa0', 'opa1', 'opa2', 'opa3', 'opa4']
 
-    if args.member:
-        members = [args.member]
-    if args.year:
-        years = [args.year]
+    # if args.member:
+    #     members = [args.member]
+    # if args.year:
+    #     years = [args.year]
 
-    tasks = list(product(years, months, members))
-    print(f"Total tasks: {len(tasks)} for members: {members} and year: {years}")
+    # tasks = list(product(years, months, members))
+    # print(f"Total tasks: {len(tasks)} for members: {members} and year: {years}")
 
-    # ---- Set number of processes ----
-    nproc = int(os.environ.get("SLURM_CPUS_PER_TASK", min(len(tasks),mp.cpu_count())))
-    print(f"Using {nproc} processes")
+    # # ---- Set number of processes ----
+    # nproc = int(os.environ.get("SLURM_CPUS_PER_TASK", min(len(tasks),mp.cpu_count())))
+    # print(f"Using {nproc} processes")
 
-    # ---- Parallel execution ----
-    with mp.Pool(nproc) as pool:
-        pool.map(run_task, tasks)
+    # # ---- Parallel execution ----
+    # with mp.Pool(nproc) as pool:
+    #     pool.map(run_task, tasks)
 
 
 

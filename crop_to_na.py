@@ -36,7 +36,7 @@ def crop_concept_to_zarr(
         for month_idx in range(1, 13):
             ym = f"{year}{month_idx:02d}"
             infile = (
-                f"/quobyte/maikesgrp/sanah/target/{concept}/{member}/"
+                f"/quobyte/maikesgrp/sanah/concepts/{concept}/{member}/"
                 f"{concept}_{ym}_{cell}.nc"
             )
 
@@ -92,7 +92,7 @@ def crop_input_to_zarr(
     zarr_path = os.path.join(out_dir, f"{concept}_na.zarr")
 
     first_file = True
-
+    
     for year in years:
         for month_idx in range(1, 13):
             ym = f"{year}{month_idx:02d}"
@@ -150,5 +150,5 @@ if __name__ == "__main__":
 
     # grids = {'sometauy': 'V', 'sozotaux': 'U', 'sosaline': 'T', 'sosstsst': 'T', 'sohefldo': 'T', 
     #         'somxl010': 'T'}
-    crop_input_to_zarr(member, 'sossheig', 'T', years=range(1979, 2019))
-    #crop_concept_to_zarr(member, 'vomlhc', 'T', years=range(1979, 2019))
+    #crop_input_to_zarr(member, 'sossheig', 'T', years=range(1979, 2019))
+    crop_concept_to_zarr(member, 'votempdiff', 'T', years=range(1979, 2019))

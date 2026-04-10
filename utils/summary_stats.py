@@ -25,7 +25,7 @@ def evaluate_model(model, loader, input_norm, mask_2d):
     with torch.no_grad():
         for data, _, target in loader:
             norm_data = input_norm.normalize(data.float())
-            output, _ = model(norm_data)
+            output, *_ = model(norm_data)
             
             # Flatten predictions and targets (Size: 362,400)
             pred_binary = (output > 0).float().cpu().numpy().flatten()
@@ -105,7 +105,7 @@ for i, epoch in enumerate(epochs_to_check):
     model.eval()
     
     with torch.no_grad():
-        output, _ = model(input_norm.normalize(data.float()))
+        output, *_ = model(input_norm.normalize(data.float()))
         # Shape is (1, 1, 3, 302, 400) -> we take Lead 0
         pred_2d = (output[0, 0, 0, :, :] > 0).float().cpu().numpy()
         

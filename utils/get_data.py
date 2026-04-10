@@ -101,19 +101,57 @@ def get_dataset():
 
     c_vars = []
     for concept in concepts:
+        print(concept)
         concept_slice = dataset.np_concepts[concept]
+        print(concept_slice.shape)
         c_vars.append(concept_slice)
     c_vals = np.stack(c_vars)
 
     l_vars = []
     for label in labels:
+        print(label)
         label_slice = dataset.np_labels[label]
+        print(label_slice.shape)
         l_vars.append(label_slice)
     l_vals = np.stack(l_vars)
 
-    input_norm.fit(X_vals[:, :, :train_time_end])
-    concept_norm.fit(c_vals[:, :, :train_time_end])
-    output_norm.fit(l_vals[:, :, :train_time_end])
+    norm_cache = '/quobyte/maikesgrp/sanah/norm_stats.npz'
+    features_key = '_'.join(sorted(features)) + f'_w{config.getint("DATASET", "context_window")}'
+    concepts_key = '_'.join(sorted(concepts)) + f'_w{config.getint("DATASET", "context_window")}'
+    if os.path.exists(norm_cache):
+        cache = np.load(norm_cache, allow_pickle=True)
+        if cache['features_key'].item() == features_key and cache['concepts_key'].item() == concepts_key:
+            print('Loading norm stats from cache', flush=True)
+            input_norm.mean   = torch.from_numpy(cache['input_mean']).float()
+            input_norm.std    = torch.from_numpy(cache['input_std']).float()
+            concept_norm.mean = torch.from_numpy(cache['concept_mean']).float()
+            concept_norm.std  = torch.from_numpy(cache['concept_std']).float()
+            output_norm.mean  = torch.from_numpy(cache['output_mean']).float()
+            output_norm.std   = torch.from_numpy(cache['output_std']).float()
+        else:
+            print('Cache mismatch, refitting norms', flush=True)
+            input_norm.fit(X_vals[:, :, :train_time_end])
+            concept_norm.fit(c_vals[:, :, :train_time_end])
+            output_norm.fit(l_vals[:, :, :train_time_end])
+            np.savez(norm_cache,
+                     input_mean=input_norm.mean.numpy(), input_std=input_norm.std.numpy(),
+                     concept_mean=concept_norm.mean.numpy(), concept_std=concept_norm.std.numpy(),
+                     output_mean=output_norm.mean.numpy(), output_std=output_norm.std.numpy(),
+                     features_key=features_key, concepts_key=concepts_key)
+    else:
+        print('No norm cache, fitting and saving', flush=True)
+        input_norm.fit(X_vals[:, :, :train_time_end])
+        print('fit input')
+        concept_norm.fit(c_vals[:, :, :train_time_end])
+        print('fit concept')
+        output_norm.fit(l_vals[:, :, :train_time_end])
+        print('fit label')
+        np.savez(norm_cache,
+                 input_mean=input_norm.mean.numpy(), input_std=input_norm.std.numpy(),
+                 concept_mean=concept_norm.mean.numpy(), concept_std=concept_norm.std.numpy(),
+                 output_mean=output_norm.mean.numpy(), output_std=output_norm.std.numpy(),
+                 features_key=features_key, concepts_key=concepts_key)
+        print('norm stats saved', flush=True)
 
     #plot_data_histograms(X_vals, c_vals)
 

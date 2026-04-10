@@ -47,7 +47,7 @@ def make_output_dir():
     print(f'Output directory: {output}', flush=True)
     return output
 
-def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
+def train(input_norm, concept_norm, output_norm, train_loader, val_loader, concept_idx=None):
     # Training loop
     n_epochs = config.getint('TRAINING', 'epochs')
     concept_loss_fn = get_config.get_loss_fn(config['TRAINING']['concept_loss_fn'])
@@ -59,6 +59,13 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
         }
     out_loss_fn = get_config.get_loss_fn(config['TRAINING']['out_loss_fn'], **focal_kwargs)
     concept_lambda = config.getfloat('TRAINING', 'concept_lambda')
+    lambda_max = config.getfloat('TRAINING', 'lambda_max', fallback=config.getfloat('TRAINING', 'concept_lambda'))
+    lambda_min = config.getfloat('TRAINING', 'lambda_min', fallback=config.getfloat('TRAINING', 'concept_lambda'))
+    ortho_lambda = config.getfloat('TRAINING', 'ortho_lambda', fallback=0.0)
+
+    # Boolean ocean mask (Y, X) derived from tmask — used for concept loss to avoid
+    # excluding valid near-zero values that the != 0 heuristic would miss
+    ocean_mask = (mask[0, 0, 0] == 1)  # (Y, X), on DEVICE
 
     model_type = config['MODEL']['type']
     model = get_config.get_model()
@@ -93,6 +100,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
     val_per_concept_losses = {name: [] for name in concept_names}
     for epoch in range(start_epoch, n_epochs):
         epoch_start = time.time()
+        # concept_lambda = lambda_max * (lambda_min / lambda_max) ** (epoch / max(n_epochs - 1, 1))  # adaptive
         print(DEVICE)
         model.train(True)
         train_loss_accum = 0
@@ -106,14 +114,38 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
             batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
-            pred, concept_pred, _ = model(batch)
+            pred, concept_pred, _, pred_sup, pred_free = model(batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
 
-            pred_loss = out_loss_fn(pred, y)
-            concept_loss = concept_loss_fn(concept_pred, concept_y)
-            loss = (1-concept_lambda) * pred_loss + (concept_lambda * concept_loss)
-            
+            # pred_loss uses pred_sup only so free path cannot steal gradient from supervised path
+            pred_loss = out_loss_fn(pred_sup * mask, y)
+            per_cl = []
+            ci_range = [concept_idx] if concept_idx is not None else range(n_concepts)
+            # ocean_mask is (Y, X); expand to (B, output_dim, Y, X) to match concept_y[:, ci]
+            cm = ocean_mask.unsqueeze(0).unsqueeze(0).expand_as(concept_y[:, 0])
+            for ci in ci_range:
+                cl = concept_loss_fn(concept_pred[:, ci][cm], concept_y[:, ci][cm]) if cm.any() else concept_pred.new_tensor(0.0)
+                per_cl.append(cl)
+            concept_loss = torch.stack(per_cl).mean()
+
+            # Free concept residual loss: free path trains only on what supervised path doesn't explain
+            if pred_free is not None:
+                residual = (y - pred_sup.detach()) * mask
+                free_loss = out_loss_fn(pred_free * mask, residual)
+                # Orthogonality penalty: penalize correlation between free output and supervised output
+                if ortho_lambda > 0:
+                    pf = (pred_free * mask).flatten()
+                    ps = (pred_sup.detach() * mask).flatten()
+                    pf_c = pf - pf.mean()
+                    ps_c = ps - ps.mean()
+                    ortho_loss = (pf_c * ps_c).sum() / (pf_c.norm() * ps_c.norm() + 1e-8)
+                    free_loss = free_loss + ortho_lambda * ortho_loss.abs()
+            else:
+                free_loss = torch.tensor(0.0, device=DEVICE)
+
+            loss = (1-concept_lambda) * pred_loss + concept_lambda * concept_loss + free_loss
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -122,9 +154,8 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
             train_loss_accum += loss.item()
             train_pred_accum += pred_loss.item()
             train_concept_accum += concept_loss.item()
-            for ci in range(n_concepts):
-                cl = concept_loss_fn(concept_pred[:, ci], concept_y[:, ci])
-                train_per_concept_accum[ci] += cl.item()
+            for idx, ci in enumerate(ci_range):
+                train_per_concept_accum[ci] += per_cl[idx].item()
         loss_mean = train_loss_accum / n_snaps
         losses.append(loss_mean)
         pred_losses.append(train_pred_accum / n_snaps)
@@ -145,19 +176,28 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 val_y = torch.nan_to_num(output_norm.normalize(val_y), nan=0.0)
                 val_batch, val_concept_y, val_y = val_batch.to(DEVICE), val_concept_y.to(DEVICE), val_y.to(DEVICE)
 
-                pred, concept_pred, _ = model(val_batch)
+                pred, concept_pred, _, val_pred_sup, val_pred_free = model(val_batch)
                 pred = pred*mask
                 concept_pred = concept_pred*mask
 
                 n_snaps += 1
-                val_pred_loss = out_loss_fn(pred, val_y).item()
-                val_concept_loss = concept_loss_fn(concept_pred, val_concept_y).item()
-                val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss
+                val_pred_loss = out_loss_fn(val_pred_sup * mask, val_y).item()
+                val_per_cl = []
+                vcm = ocean_mask.unsqueeze(0).unsqueeze(0).expand_as(val_concept_y[:, 0])
+                for ci in ci_range:
+                    cl = concept_loss_fn(concept_pred[:, ci][vcm], val_concept_y[:, ci][vcm]) if vcm.any() else concept_pred.new_tensor(0.0)
+                    val_per_cl.append(cl)
+                val_concept_loss = torch.stack(val_per_cl).mean().item()
+                if val_pred_free is not None:
+                    val_residual = (val_y - val_pred_sup) * mask
+                    val_free_loss = out_loss_fn(val_pred_free * mask, val_residual).item()
+                else:
+                    val_free_loss = 0.0
+                val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss + val_free_loss
                 val_pred_accum += val_pred_loss
                 val_concept_accum += val_concept_loss
-                for ci in range(n_concepts):
-                    cl = concept_loss_fn(concept_pred[:, ci], val_concept_y[:, ci])
-                    val_per_concept_accum[ci] += cl.item()
+                for idx, ci in enumerate(ci_range):
+                    val_per_concept_accum[ci] += val_per_cl[idx].item()
                 
             val_loss_mean = val_loss / n_snaps
             val_losses.append(val_loss_mean)
@@ -175,7 +215,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
         epoch_time = time.time() - epoch_start
         if epoch % 5 == 0:
             print(f"epoch: {epoch}; loss: {loss_mean:.5f}; val_loss: {val_loss_mean:.5f}; time: {epoch_time:.1f}s")
-            print(f"learning rate: {optimizer.param_groups[0]['lr']}")
+            print(f"learning rate: {optimizer.param_groups[0]['lr']}; concept_lambda: {concept_lambda:.4f}")
         if epoch % config.getint('OUTPUT', 'n_epochs_between_checkpoints') == 0:
             #update to have model save with more detail
             save_model = f"{model_type}"        
@@ -196,7 +236,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader):
                 'val_per_concept': val_per_concept_losses,
             }, f"{output}/detailed_losses.pt")
      #change to be BESTMODEL
-    return model, losses, val_losses
+    return model, losses, val_losses, output
 
 def eval(input_norm, concept_norm, output_norm, model, test_loader):
     concept_loss_fn = get_config.get_loss_fn(config['TRAINING']['concept_loss_fn'])
@@ -225,7 +265,7 @@ def eval(input_norm, concept_norm, output_norm, model, test_loader):
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
             test_batch, concept_y, y = test_batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
-            pred, concept_pred, _ = model(test_batch)
+            pred, concept_pred, *_ = model(test_batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
 

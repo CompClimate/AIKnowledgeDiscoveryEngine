@@ -86,7 +86,13 @@ class Encoder(nn.Module):
             out_ch = channels[i + 1]
             self.conv_layers.append(
                 nn.Sequential(
+                    # single conv (original)
                     nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
+                    nn.BatchNorm2d(out_ch),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout2d(dropout),
+                    # second conv for double-conv UNet:
+                    nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
                     nn.Dropout2d(dropout),
@@ -120,7 +126,13 @@ class Decoder(nn.Module):
 
             self.conv_layers.append(
                 nn.Sequential(
+                    # single conv (original)
                     nn.Conv2d(out_ch + skip_ch, out_ch, 3, padding=1),
+                    nn.BatchNorm2d(out_ch),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout2d(dropout),
+                    # second conv for double-conv UNet:
+                    nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
                     nn.Dropout2d(dropout),
@@ -141,7 +153,7 @@ class Decoder(nn.Module):
 
 
 class UNetCBM(nn.Module):
-    def __init__(self, n_features, n_concepts, output_dim, n_free_concepts=0, channels_list=[32, 64, 128, 256]):
+    def __init__(self, n_features, n_concepts, output_dim, n_free_concepts=0, channels_list=[32, 64, 128, 256]):  # wider: [64, 128, 256, 512]
         super().__init__()
         self.n_features = n_features  # This is actually T*V in PointwiseCBM
         self.n_concepts = n_concepts
@@ -151,9 +163,12 @@ class UNetCBM(nn.Module):
         # Encoder takes n_features as input (which is T*V concatenated)
         self.encoder = Encoder(n_features, channels_list)
 
-        # UNet bottleneck
+        # UNet bottleneck (single conv — add a second identical block below to deepen)
         bottleneck_ch = channels_list[-1]
         self.bottleneck = nn.Sequential(
+            nn.Conv2d(bottleneck_ch, bottleneck_ch, 3, padding=1),
+            nn.BatchNorm2d(bottleneck_ch),
+            nn.ReLU(inplace=True),
             nn.Conv2d(bottleneck_ch, bottleneck_ch, 3, padding=1),
             nn.BatchNorm2d(bottleneck_ch),
             nn.ReLU(inplace=True),
@@ -173,13 +188,15 @@ class UNetCBM(nn.Module):
         if n_free_concepts > 0:
             self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Output head: linear combination of all concepts (supervised + free)
-        total_concept_channels = (n_concepts + n_free_concepts) * output_dim
-        self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
+        # Output head: linear combination of supervised concepts only
+        self.output_head = nn.Conv2d(n_concepts * output_dim, output_dim, kernel_size=1)
 
-        # Residual free output head (commented out — using simple linear combination instead)
-        # if n_free_concepts > 0:
-        #     self.free_output_head = nn.Conv2d(n_free_concepts * output_dim, output_dim, kernel_size=1)
+        # Residual free output head: separate head for free concepts, added to pred_sup
+        # Revert to additive (no residual): replace both heads with a single head over all concepts:
+        #   total_concept_channels = (n_concepts + n_free_concepts) * output_dim
+        #   self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
+        if n_free_concepts > 0:
+            self.free_output_head = nn.Conv2d(n_free_concepts * output_dim, output_dim, kernel_size=1)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
@@ -212,24 +229,22 @@ class UNetCBM(nn.Module):
         # Free concept predictions
         if self.n_free_concepts > 0:
             free = self.free_concept_head(x)  # (B, n_free*output_dim, Y, X)
-            all_concepts = torch.cat([concepts, free], dim=1)
         else:
             free = None
-            all_concepts = concepts
 
-        # Output: linear combination of all concepts (supervised + free)
-        output = self.output_head(all_concepts)  # (B, output_dim, Y, X)
-        pred_sup = output  # no separation in simple mode
-        pred_free = None
+        # Residual: supervised concepts → pred_sup, free concepts → pred_free, output = sum
+        pred_sup = self.output_head(concepts)   # (B, output_dim, Y, X)
+        if free is not None:
+            pred_free = self.free_output_head(free)
+            output = pred_sup + pred_free
+        else:
+            pred_free = None
+            output = pred_sup
 
-        # Residual free concept path (commented out)
-        # pred_sup = self.output_head(concepts)
-        # if free is not None:
-        #     pred_free = self.free_output_head(free)
-        #     output = pred_sup + pred_free
-        # else:
-        #     pred_free = None
-        #     output = pred_sup
+        # Revert to additive (free concept as extra linear channel, no residual):
+        # all_concepts = torch.cat([concepts, free], dim=1) if free is not None else concepts
+        # output = self.output_head(all_concepts)
+        # pred_sup = output; pred_free = None
 
         # Crop to original spatial dimensions
         concepts = concepts[:, :, :Y, :X]

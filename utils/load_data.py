@@ -5,6 +5,7 @@ import xarray as xr
 import numpy as np
 import torch
 from scipy.ndimage import gaussian_filter
+from scipy.signal import detrend
 from utils.get_config import try_cast, parse_section, config
 
 xr.set_options(use_new_combine_kwarg_defaults=True)
@@ -80,8 +81,8 @@ class EmulatorDataset(Dataset):
         print('preprocessing done')
 
     def preprocessing(self):
-        log_features = {'somxl010'}
-        log_concepts = {'vori', 'von2', 'vos2'}  # log10, no clipping
+        log_features = {}
+        log_concepts = {}  # log10, no clipping
         symlog_concepts = {'vohfe'}               # symlog, no clipping
         smooth_features = try_cast(config['DATASET']['smooth_features'])
         smooth_concepts = try_cast(config['DATASET']['smooth_concepts'])
