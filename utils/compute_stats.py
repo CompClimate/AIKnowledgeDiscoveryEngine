@@ -17,7 +17,8 @@ class ZScoreNormalize():
         self.std = torch.from_numpy(np.clip(self.std, a_min=1e-8, a_max=None)).float()
 
     def normalize(self, x):
-        return (x - self.mean[None, :, None, None, None]) / self.std[None, :, None, None, None]
+        x = (x - self.mean[None, :, None, None, None]) / self.std[None, :, None, None, None]
+        return torch.nan_to_num(x, nan=0.0)
 
     def denormalize(self, x):
         return x * self.std[None, :, None, None, None] + self.mean[None, :, None, None, None]

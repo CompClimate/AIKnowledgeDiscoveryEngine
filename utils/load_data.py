@@ -64,28 +64,84 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_labels[label] = ds.to_array().values.squeeze(0)
+        self.preprocessing()
 
-        # materialize
-        for feat in self.features_to_clip:
+    def preprocessing(self):
+        log_features = {'somxl010'}
+        log_concepts = {'vori', 'von2', 'vos2'}  # log10, no clipping
+        symlog_concepts = {'vohfe'}               # symlog, no clipping
+        smooth_features = try_cast(config['DATASET']['smooth_features'])
+        smooth_concepts = try_cast(config['DATASET']['smooth_concepts'])
+        sigma = config.getfloat('DATASET', 'smooth_sigma')
+
+        for feat in self.features:
+            if feat not in self.np_data:
+                continue
             arr = self.np_data[feat]
-            p2 = np.nanpercentile(arr, 2)
-            p98 = np.nanpercentile(arr, 98)
-            arr = np.clip(arr, p2, p98)
+            if feat in log_features:
+                arr = np.log10(np.where(arr > 0, arr, np.nan))
+                print(f'  {feat}: log10')
+            if feat in self.features_to_clip:
+                p2 = np.nanpercentile(arr, 2)
+                p98 = np.nanpercentile(arr, 98)
+                arr = np.clip(arr, p2, p98)
+                print(f'  {feat}: clipped to [{p2:.3g}, {p98:.3g}]')
+            if feat in smooth_features:
+                arr = self._smooth(arr, sigma)
+                print(f'  {feat}: smoothed sigma={sigma}')
             self.np_data[feat] = arr
-        print('materialized inputs')
+        print('preprocessed inputs')
 
-        for concept in self.concepts_to_clip:
+        for concept in self.concepts:
+            if concept not in self.np_concepts:
+                continue
             arr = self.np_concepts[concept]
-            if concept == 'vori':
+            # Transform (applied regardless of clipping)
+            if concept in log_concepts:
+                arr = np.log10(np.where(arr > 0, arr, np.nan))
+                print(f'  {concept}: log10')
+            elif concept in symlog_concepts:
                 arr = np.sign(arr) * np.log10(1 + np.abs(arr))
-                print(f'  vori: log10 transform, range=[{np.nanmin(arr):.3g}, {np.nanmax(arr):.3g}]')
-            elif concept in ('vohfe', 'von2', 'vos2'):
+                print(f'  {concept}: symlog')
+            # Clip only if requested
+            if concept in self.concepts_to_clip:
                 p2 = np.nanpercentile(arr, 2)
                 p98 = np.nanpercentile(arr, 98)
                 arr = np.clip(arr, p2, p98)
                 print(f'  {concept}: clipped to [{p2:.3g}, {p98:.3g}]')
+            if concept in smooth_concepts:
+                arr = self._smooth(arr, sigma)
+                print(f'  {concept}: smoothed sigma={sigma}')
             self.np_concepts[concept] = arr
-        print('materialized concepts')
+        print('preprocessed concepts')
+
+        for label in self.labels:
+            if label not in self.np_labels:
+                continue
+            arr = self.np_labels[label]
+            arr = self._smooth(arr, sigma)
+            self.np_labels[label] = arr
+            print(f'  {label}: smoothed sigma={sigma}')
+
+    def _smooth(self, arr, sigma):
+        """Apply gaussian smoothing over spatial dims (y, x) only."""
+        nan_mask = np.isnan(arr)
+        filled  = np.where(nan_mask, 0.0, arr)
+        weights = np.where(nan_mask, 0.0, 1.0)
+        smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
+        smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
+        return np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
+
+    def _smooth_binary(self, arr, sigma):
+        """Smooth binary labels over spatial dims only then re-threshold at 0.5."""
+        nan_mask = np.isnan(arr)
+        filled  = np.where(nan_mask, 0.0, arr).astype(float)
+        weights = np.where(nan_mask, 0.0, 1.0)
+        smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
+        smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
+        smoothed = np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
+        return np.where(nan_mask, np.nan, (smoothed >= 0.5).astype(float))
+
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)

@@ -42,9 +42,9 @@ def get_dataset():
     #TODO move norm type to config
     # out_loss_fn = config['TRAINING']['out_loss_fn']
     # out_loss_fn = getattr(torch.nn, out_loss_fn)()
-    input_norm = MinMaxNormalize()
-    concept_norm = MinMaxNormalize()
-    output_norm = MinMaxNormalize() 
+    input_norm = ZScoreNormalize()
+    concept_norm = ZScoreNormalize()
+    output_norm = ZScoreNormalize() 
 
     X_vars = []
     for feat in features:
@@ -68,6 +68,8 @@ def get_dataset():
     input_norm.fit(X_vals[:, :, train_time])
     concept_norm.fit(c_vals[:, :, train_time])
     output_norm.fit(l_vals[:, :, train_time])
+
+    print('input norm mean ', input_norm.mean, input_norm.std)
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)
