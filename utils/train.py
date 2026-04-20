@@ -47,7 +47,7 @@ def make_output_dir():
     print(f'Output directory: {output}', flush=True)
     return output
 
-def train(input_norm, concept_norm, output_norm, train_loader, val_loader, concept_idx=None):
+def train(input_norm, concept_norm, output_norm, train_loader, val_loader, output_dir = None, concept_idx=None):
     # Training loop
     n_epochs = config.getint('TRAINING', 'epochs')
     concept_loss_fn = get_config.get_loss_fn(config['TRAINING']['concept_loss_fn'])
@@ -69,20 +69,16 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, conce
 
     model_type = config['MODEL']['type']
     model = get_config.get_model()
-    #model_type = config['MODEL']['type']
-    #model_type = 'unet'
-    #model = get_config.get_model()
-    n_free = config.getint('MODEL', 'n_free_concepts', fallback=0)
-    # model = UNetCBM(n_features=len(try_cast(config['DATASET']['features']))*config.getint('DATASET', 'context_window'),
-    #     n_concepts=len(try_cast(config['DATASET']['concepts'])),
-    #     output_dim=len(try_cast(config['DATASET']['offset'])),
-    #     n_free_concepts=n_free)
+    
     model.to(DEVICE)
     optimizer = get_config.get_optimizer(model)
     scheduler = get_config.get_scheduler(optimizer)
     scheduler_name = config['SCHEDULER']['type']   
-
-    output = make_output_dir()
+    
+    if output_dir == None:
+        output = make_output_dir()
+    else:
+        output = output_dir
 
     #allow for restart?
     start_epoch = 0
@@ -100,7 +96,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, conce
     val_per_concept_losses = {name: [] for name in concept_names}
     for epoch in range(start_epoch, n_epochs):
         epoch_start = time.time()
-        # concept_lambda = lambda_max * (lambda_min / lambda_max) ** (epoch / max(n_epochs - 1, 1))  # adaptive
+        concept_lambda = lambda_max * (lambda_min / lambda_max) ** (epoch / max(n_epochs - 1, 1))  # adaptive
         print(DEVICE)
         model.train(True)
         train_loss_accum = 0

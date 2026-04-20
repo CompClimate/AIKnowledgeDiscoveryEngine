@@ -18,7 +18,7 @@ from sklearn.preprocessing import normalize
 from scipy.stats import pearsonr
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
+# claude written function to find the latest directory (but i have changed directories many times so may be redundant)
 def load_model(model_dir, epoch=None):
     model_type = config['MODEL']['type']
     if epoch is not None:
@@ -39,7 +39,9 @@ def load_model(model_dir, epoch=None):
     model.eval()
     return model
 
-def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_norm=None, output_dir=None):
+# saves all predictions for the entire input dataset (needed for ACC calculation)
+def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_norm=None,
+                   output_dir=None, full_loader=None):
     if model_dir is None:
         model_dir = find_output_dir()
     if output_dir is None:
@@ -48,11 +50,11 @@ def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
     config.read(f'{model_dir}/config.ini')
 
     from torch.utils.data import DataLoader
-    if input_norm is None or concept_norm is None or output_norm is None:
-        input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
-
-    full_dataset = train_loader.dataset.dataset  # underlying EmulatorDataset
-    full_loader = DataLoader(full_dataset, batch_size=64, shuffle=False)
+    if full_loader is None:
+        if input_norm is None or concept_norm is None or output_norm is None:
+            input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
+        full_dataset = train_loader.dataset.dataset  # underlying EmulatorDataset
+        full_loader = DataLoader(full_dataset, batch_size=64, shuffle=False)
 
     loc = config['DATASET']['location']
     mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
@@ -76,13 +78,12 @@ def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
             pred, cpred, *_ = model(batch)
             pred = (pred * mask_tensor).cpu()
-            pred = output_norm.denormalize(pred).numpy()
-            cpred = concept_norm.denormalize(cpred.cpu())
             preds.append(pred[:, 0, 0])
-            targets.append(y.numpy()[:, 0, 0])
+            targets.append(output_norm.normalize(y).numpy()[:, 0, 0])
+            cpred = cpred.cpu()
             for ci in range(n_concepts):
                 concept_preds[ci].append(cpred[:, ci, 0].numpy())
-                concept_targets[ci].append(concept_y[:, ci, 0].numpy())
+                concept_targets[ci].append(concept_norm.normalize(concept_y)[:, ci, 0].numpy())
 
     preds   = np.concatenate(preds,   axis=0)
     targets = np.concatenate(targets, axis=0)
@@ -100,103 +101,17 @@ def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
         concept_preds=np.stack(concept_preds),
         concept_targets=np.stack(concept_targets),
         concept_names=np.array(concept_names),
+        output_mean=output_norm.mean.numpy(),
+        output_std=output_norm.std.numpy(),
+        concept_mean=concept_norm.mean.numpy(),
+        concept_std=concept_norm.std.numpy(),
     )
     print(f'Saved {save_path}')
 
 
-def compute_mhw_events(results_path=None):
-    import pandas as pd
-    from scipy import signal
 
-    if results_path is None:
-        results_path = find_output_dir()
-
-    results = np.load(f'{results_path}/all_preds.npz', allow_pickle=True)
-    preds   = results['preds']    # (N, Y, X)
-    targets = results['targets']  # (N, Y, X)
-    ocean_mask = results['ocean_mask']
-
-    n_members = len(try_cast(config['DATASET']['members']))
-    window    = config.getint('DATASET', 'context_window')
-    offset    = try_cast(config['DATASET']['offset'])[0]
-    dates     = pd.date_range(start=config['DATASET']['start'],
-                              end=config['DATASET']['end'], freq='MS')
-    n_times   = len(dates) - window - offset + 1
-
-    # reconstruct dates for each sample (member varies fastest)
-    all_dates  = [dates[t + window - 1 + offset] for t in range(n_times) for _ in range(n_members)]
-    all_months = np.array([d.month for d in all_dates])
-
-    # extract opa0 only (member index 0)
-    opa0_idx   = np.array([i for i in range(len(preds)) if i % n_members == 0])
-    preds_opa0   = preds[opa0_idx]    # (n_times, Y, X)
-    targets_opa0 = targets[opa0_idx]
-    months_opa0  = all_months[opa0_idx]
-
-    Y, X = preds_opa0.shape[1], preds_opa0.shape[2]
-
-    def compute_anomaly(field, months):
-        clim = np.full((12, Y, X), np.nan)
-        for m in range(1, 13):
-            clim[m-1] = np.nanmean(field[months == m], axis=0)
-        anom = np.full_like(field, np.nan)
-        for i, m in enumerate(months):
-            anom[i] = field[i] - clim[m-1]
-        return anom, clim
-
-    def compute_threshold(anom_detrended, months):
-        thresh = np.full((12, Y, X), np.nan)
-        for m in range(1, 13):
-            thresh[m-1] = np.nanpercentile(anom_detrended[months == m], 90, axis=0)
-        return thresh
-
-    def compute_binary(anom_detrended, thresh, months):
-        binary = np.full_like(anom_detrended, np.nan)
-        for i, m in enumerate(months):
-            binary[i] = np.where(ocean_mask, (anom_detrended[i] > thresh[m-1]).astype(float), np.nan)
-        return binary
-
-    print('Computing predicted anomalies...', flush=True)
-    anom_pred, _   = compute_anomaly(preds_opa0, months_opa0)
-    print(anom_pred.shape)
-    print('Detrending predicted anomalies...', flush=True)
-    #anom_pred_dt   = signal.detrend(anom_pred[0:463], axis=0)
-    anom_pred_dt = signal.detrend(anom_pred.astype(np.float64), axis=0)
-    print(anom_pred_dt.shape)
-    print('Computing predicted threshold...', flush=True)
-    thresh_pred    = compute_threshold(anom_pred_dt, months_opa0)
-    print('Computing predicted binary events...', flush=True)
-    binary_pred    = compute_binary(anom_pred_dt, thresh_pred, months_opa0)
-
-    print('Computing target anomalies...', flush=True)
-    anom_tgt, _    = compute_anomaly(targets_opa0, months_opa0)
-    print('Detrending target anomalies...', flush=True)
-    anom_tgt_f64 = anom_tgt.astype(np.float64)                                                   
-    anom_tgt_f64[:, ~ocean_mask] = 0.0                                                           
-    anom_tgt_dt = signal.detrend(anom_tgt_f64, axis=0)
-    anom_tgt_dt[:, ~ocean_mask] = np.nan
-    print('Computing target threshold...', flush=True)
-    thresh_tgt     = compute_threshold(anom_tgt_dt, months_opa0)
-    print('Computing target binary events...', flush=True)
-    binary_tgt     = compute_binary(anom_tgt_dt, thresh_tgt, months_opa0)
-
-    save_path = f'{results_path}/mhw_events.npz'
-    np.savez_compressed(
-        save_path,
-        binary_pred=binary_pred,
-        binary_tgt=binary_tgt,
-        anom_pred=anom_pred_dt,
-        anom_tgt=anom_tgt_dt,
-        thresh_pred=thresh_pred,
-        thresh_tgt=thresh_tgt,
-        months=months_opa0,
-        ocean_mask=ocean_mask,
-    )
-    print(f'Saved {save_path}', flush=True)
-    return binary_pred, binary_tgt, months_opa0, ocean_mask
-
-
-def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_norm=None, val_loader=None, output_dir=None):
+# saving prediction for validation and test set, including the free concept
+def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_norm=None, val_loader=None, test_loader=None, output_dir=None):
     if model_dir is None:
         model_dir = find_output_dir()
     if output_dir is None:
@@ -226,26 +141,25 @@ def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
 
     n_free_concepts = config.getint('MODEL.HYPERPARAMETERS', 'n_free_concepts', fallback=0)
     free_preds = [[] for _ in range(n_free_concepts)]
-    sup_preds = []   # pred_sup in normalized space, for free concept weight analysis
 
-    print('Running val inference (lead 0 only)...')
+    print('Running val+test inference (lead 0 only)...')
+    loaders = [val_loader] if test_loader is None else [val_loader, test_loader]
     with torch.no_grad():
-        for batch, concept_y, y in val_loader:
-            batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
-            pred, cpred, free, pred_sup, pred_free = model(batch)
-            pred = (pred * mask_tensor).cpu()
-            pred = output_norm.denormalize(pred).numpy()    # (B, 1, n_leads, Y, X)
-            #cpred = concept_norm.denormalize(cpred.cpu())   # (B, n_concepts, n_leads, Y, X)
-            cpred = cpred.cpu()
-            preds.append(pred[:, 0, 0])                     # (B, Y, X)
-            targets.append(y.numpy()[:, 0, 0])
-            sup_preds.append((pred_sup * mask_tensor)[:, 0, 0].cpu().numpy())  # normalized space
-            for ci in range(n_concepts):
-                concept_preds[ci].append(cpred[:, ci, 0].numpy())    # (B, Y, X)
-                concept_targets[ci].append(concept_y[:, ci, 0].numpy())
-            if free is not None:
-                for fi in range(n_free_concepts):
-                    free_preds[fi].append((free[:, fi, 0] * mask_tensor[0, 0, 0]).cpu().numpy())
+        for loader in loaders:
+            for batch, concept_y, y in loader:
+                batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
+                pred, cpred, free = model(batch)
+                pred = (pred * mask_tensor).cpu()
+                pred = output_norm.denormalize(pred).numpy()    # (B, 1, n_leads, Y, X)
+                cpred = concept_norm.denormalize(cpred.cpu())   # (B, n_concepts, n_leads, Y, X)
+                preds.append(pred[:, 0, 0])                     # (B, Y, X)
+                targets.append(y.numpy()[:, 0, 0])
+                for ci in range(n_concepts):
+                    concept_preds[ci].append(cpred[:, ci, 0].numpy())    # (B, Y, X)
+                    concept_targets[ci].append(concept_y[:, ci, 0].numpy())
+                if free is not None:
+                    for fi in range(n_free_concepts):
+                        free_preds[fi].append((free[:, fi, 0] * mask_tensor[0, 0, 0]).cpu().numpy())
 
     preds   = np.concatenate(preds,   axis=0)   # (N, Y, X)
     targets = np.concatenate(targets, axis=0)
@@ -254,13 +168,11 @@ def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
         concept_targets[ci] = np.concatenate(concept_targets[ci], axis=0)
     for fi in range(n_free_concepts):
         free_preds[fi] = np.concatenate(free_preds[fi], axis=0)
-    sup_preds = np.concatenate(sup_preds, axis=0)   # (N, Y, X) normalized
 
     save_path = os.path.join(output_dir, 'val_preds_lead0.npz')
     save_dict = dict(
         preds=preds,
         targets=targets,
-        sup_preds=sup_preds,
         ocean_mask=ocean_mask,
         lead=offsets[0],
         concept_preds=np.stack(concept_preds),      # (n_concepts, N, Y, X)
@@ -273,409 +185,7 @@ def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
     print(f'Saved {save_path}')
 
 
-def run_inference(model_dir=None):
-    if model_dir is None:
-        model_dir = find_output_dir()
-
-    input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
-
-    loc = config['DATASET']['location']
-    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
-    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
-    ocean_mask = mask_2d == 1
-    mask_tensor = torch.tensor(mask_2d, dtype=torch.float32)[None, None, None, :, :].to(DEVICE)
-
-    offsets = try_cast(config['DATASET']['offset'])
-    n_leads = len(offsets)
-    Y, X = mask_2d.shape
-
-    model = load_model(model_dir)
-
-    pixel_preds   = [[] for _ in range(n_leads)]
-    pixel_targets = [[] for _ in range(n_leads)]
-
-    print('Running inference on test set...')
-    with torch.no_grad():
-        for batch, _, y in test_loader:
-            batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
-
-            pred, *_ = model(batch)
-            pred = (pred * mask_tensor).cpu().numpy()  # (B, 1, n_leads, Y, X)
-            y = y.numpy()                              # (B, 1, n_leads, Y, X)
-
-            for li in range(n_leads):
-                pixel_preds[li].append(pred[:, 0, li])    # (B, Y, X)
-                pixel_targets[li].append(y[:, 0, li])     # (B, Y, X)
-
-    for li in range(n_leads):
-        pixel_preds[li]   = np.concatenate(pixel_preds[li],   axis=0)  # (N, Y, X)
-        pixel_targets[li] = np.concatenate(pixel_targets[li], axis=0)  # (N, Y, X)
-
-    # --- Ocean-only global metrics ---
-    print('\n=== Ocean-Only Metrics ===')
-    for li, lead in enumerate(offsets):
-        pp = pixel_preds[li][:, ocean_mask].flatten()    # (N*ocean_pixels,)
-        tt = pixel_targets[li][:, ocean_mask].flatten()
-        valid = ~np.isnan(tt) & ~np.isnan(pp)
-        pp, tt = pp[valid], tt[valid]
-
-        bp = (pp >= 0.5).astype(int)
-        bce = -np.mean(tt * np.log(pp + 1e-8) + (1 - tt) * np.log(1 - pp + 1e-8))
-
-        print(f'\nLead {lead}mo:')
-        print(f'  Ocean BCE Loss : {bce:.4f}')
-        print(f'  Accuracy       : {accuracy_score(tt, bp):.4f}')
-        print(f'  Precision      : {precision_score(tt, bp, zero_division=0):.4f}')
-        print(f'  Recall         : {recall_score(tt, bp, zero_division=0):.4f}')
-        print(f'  F1             : {f1_score(tt, bp, zero_division=0):.4f}')
-        print(f'  AUC-ROC        : {roc_auc_score(tt, pp):.4f}')
-        print(f'  Brier Score    : {brier_score_loss(tt, pp):.4f}')
-        print(f'  Positive rate  : {tt.mean():.4f}')
-        print(f'  Mean pred      : {pp.mean():.4f}')
-
-    # --- Per-pixel skill maps ---
-    print('\nComputing per-pixel skill maps...')
-    fig, axes = plt.subplots(3, n_leads, figsize=(n_leads * 5, 10), layout='constrained')
-    if n_leads == 1:
-        axes = axes[:, None]
-
-    for li, lead in enumerate(offsets):
-        pp = pixel_preds[li]    # (N, Y, X)
-        tt = pixel_targets[li]  # (N, Y, X)
-
-        acc_map    = np.where(ocean_mask, np.nanmean((pp >= 0.5) == tt, axis=0), np.nan)
-        brier_map  = np.where(ocean_mask, np.nanmean((pp - tt) ** 2,   axis=0), np.nan)
-        mean_pred  = np.where(ocean_mask, np.nanmean(pp,                axis=0), np.nan)
-
-        for ri, (data, title, cmap, vmin, vmax) in enumerate([
-            (acc_map,   f'Accuracy — Lead {lead}mo',    'RdYlGn',   0,    1),
-            (brier_map, f'Brier Score — Lead {lead}mo', 'RdYlGn_r', 0,    0.25),
-            (mean_pred, f'Mean Pred — Lead {lead}mo',   'RdYlBu_r', 0,    1),
-        ]):
-            ax = axes[ri, li]
-            im = ax.imshow(np.ma.masked_invalid(data), cmap=cmap,
-                           vmin=vmin, vmax=vmax, origin='lower', aspect='equal')
-            ax.set_title(title, fontsize=10)
-            ax.axis('off')
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-    save_path = f'{model_dir}/skill_maps.png'
-    fig.savefig(save_path, dpi=200, bbox_inches='tight')
-    plt.close(fig)
-    print(f'Saved {save_path}')
-
-    # --- Threshold analysis ---
-    threshold_analysis(pixel_preds, pixel_targets, ocean_mask, offsets, model_dir)
-
-
-def threshold_analysis(pixel_preds, pixel_targets, ocean_mask, offsets, model_dir):
-    """Find optimal classification threshold using ROC and PR curves."""
-    n_leads = len(offsets)
-    fig_roc, axes_roc = plt.subplots(1, n_leads, figsize=(n_leads * 5, 4), layout='constrained')
-    fig_pr,  axes_pr  = plt.subplots(1, n_leads, figsize=(n_leads * 5, 4), layout='constrained')
-    fig_dist, axes_dist = plt.subplots(1, n_leads, figsize=(n_leads * 5, 4), layout='constrained')
-    if n_leads == 1:
-        axes_roc  = [axes_roc]
-        axes_pr   = [axes_pr]
-        axes_dist = [axes_dist]
-
-    print('\n=== Threshold Analysis ===')
-    optimal_thresholds = {}
-
-    for li, lead in enumerate(offsets):
-        pp = pixel_preds[li][:, ocean_mask].flatten()
-        tt = pixel_targets[li][:, ocean_mask].flatten()
-        valid = ~np.isnan(tt) & ~np.isnan(pp)
-        pp, tt = pp[valid], tt[valid]
-
-        # --- ROC curve ---
-        fpr, tpr, roc_thresholds = roc_curve(tt, pp)
-        auc = roc_auc_score(tt, pp)
-        youden_idx = np.argmax(tpr - fpr)
-        youden_thresh = roc_thresholds[youden_idx]
-
-        ax = axes_roc[li]
-        ax.plot(fpr, tpr, color='tab:blue', lw=2, label=f'AUC = {auc:.3f}')
-        ax.scatter(fpr[youden_idx], tpr[youden_idx], color='tab:red', zorder=5,
-                   label=f'Youden J (t={youden_thresh:.3f})')
-        ax.plot([0, 1], [0, 1], 'k--', lw=1)
-        ax.set_xlabel('FPR')
-        ax.set_ylabel('TPR')
-        ax.set_title(f'ROC — Lead {lead}mo')
-        ax.legend(fontsize=8)
-
-        # --- PR curve ---
-        precision_vals, recall_vals, pr_thresholds = precision_recall_curve(tt, pp)
-        ap = average_precision_score(tt, pp)
-        f1_vals = 2 * precision_vals[:-1] * recall_vals[:-1] / (precision_vals[:-1] + recall_vals[:-1] + 1e-8)
-        best_f1_idx = np.argmax(f1_vals)
-        best_f1_thresh = pr_thresholds[best_f1_idx]
-
-        ax = axes_pr[li]
-        ax.plot(recall_vals, precision_vals, color='tab:orange', lw=2, label=f'AP = {ap:.3f}')
-        ax.scatter(recall_vals[best_f1_idx], precision_vals[best_f1_idx], color='tab:red', zorder=5,
-                   label=f'Best F1 (t={best_f1_thresh:.3f})')
-        ax.set_xlabel('Recall')
-        ax.set_ylabel('Precision')
-        ax.set_title(f'PR Curve — Lead {lead}mo')
-        ax.legend(fontsize=8)
-
-        # --- Prediction distribution ---
-        ax = axes_dist[li]
-        pos_preds = pp[tt == 1]
-        neg_preds = pp[tt == 0]
-        bins = np.linspace(0, 1, 60)
-        ax.hist(neg_preds, bins=bins, alpha=0.6, color='tab:blue',  label=f'No event (n={len(neg_preds):,})', density=True)
-        ax.hist(pos_preds, bins=bins, alpha=0.6, color='tab:red',   label=f'Event (n={len(pos_preds):,})', density=True)
-        ax.axvline(0.5,             color='gray',    linestyle='--', lw=1, label='t=0.5')
-        ax.axvline(youden_thresh,   color='tab:red', linestyle=':',  lw=1.5, label=f'Youden t={youden_thresh:.3f}')
-        ax.axvline(best_f1_thresh,  color='tab:orange', linestyle=':', lw=1.5, label=f'Best F1 t={best_f1_thresh:.3f}')
-        ax.set_xlabel('Predicted probability')
-        ax.set_ylabel('Density')
-        ax.set_title(f'Prediction Distribution — Lead {lead}mo')
-        ax.legend(fontsize=7)
-
-        # --- Report ---
-        for label, thresh in [('0.5', 0.5), ('Youden J', youden_thresh), ('Best F1', best_f1_thresh)]:
-            bp = (pp >= thresh).astype(int)
-            print(f'\n  Lead {lead}mo | threshold={thresh:.3f} ({label}):')
-            print(f'    Precision : {precision_score(tt, bp, zero_division=0):.4f}')
-            print(f'    Recall    : {recall_score(tt, bp, zero_division=0):.4f}')
-            print(f'    F1        : {f1_score(tt, bp, zero_division=0):.4f}')
-            print(f'    Accuracy  : {accuracy_score(tt, bp):.4f}')
-
-        optimal_thresholds[lead] = {'youden': youden_thresh, 'best_f1': best_f1_thresh}
-
-    for fig, name in [(fig_roc, 'roc_curves'), (fig_pr, 'pr_curves'), (fig_dist, 'pred_distributions')]:
-        path = f'{model_dir}/{name}.png'
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        print(f'Saved {path}')
-
-    return optimal_thresholds
-
-
-def concept_inference(model_dir=None, input_norm=None, concept_norm=None, val_loader=None, output_dir=None):
-    """Evaluate concept predictions with MAE, RMSE and pattern correlation on validation set."""
-    if model_dir is None:
-        model_dir = find_output_dir()
-    if output_dir is None:
-        output_dir = model_dir
-
-    if input_norm is None or concept_norm is None or val_loader is None:
-        input_norm, concept_norm, _, _, val_loader, _ = get_dataset()
-
-    loc = config['DATASET']['location']
-    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
-    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
-    ocean_mask = mask_2d == 1
-
-    concept_names = try_cast(config['DATASET']['concepts'])
-    offsets = try_cast(config['DATASET']['offset'])
-    n_concepts = len(concept_names)
-    n_leads = len(offsets)
-
-    model = load_model(model_dir)
-
-    # (n_concepts, n_leads): lists of (B, Y, X) arrays
-    concept_preds   = [[[] for _ in range(n_leads)] for _ in range(n_concepts)]
-    concept_targets = [[[] for _ in range(n_leads)] for _ in range(n_concepts)]
-
-    print('Running concept inference on val set...')
-    with torch.no_grad():
-        for batch, concept_y, _ in val_loader:
-            batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0).to(DEVICE)
-            _, concept_pred, *_ = model(batch)
-            # concept_pred is in normalized space; denormalize to physical units
-            concept_pred = concept_norm.denormalize(concept_pred.cpu())  # (B, C, n_leads, Y, X)
-            # concept_y from loader is in raw (unnormalized) space
-
-            for ci in range(n_concepts):
-                for li in range(n_leads):
-                    concept_preds[ci][li].append(concept_pred[:, ci, li].numpy())    # (B, Y, X)
-                    concept_targets[ci][li].append(concept_y[:, ci, li].numpy())
-
-    for ci in range(n_concepts):
-        for li in range(n_leads):
-            concept_preds[ci][li]   = np.concatenate(concept_preds[ci][li],   axis=0)  # (N, Y, X)
-            concept_targets[ci][li] = np.concatenate(concept_targets[ci][li], axis=0)
-
-    # --- Global metrics ---
-    print('\n=== Concept Metrics (ocean pixels only) ===')
-    for ci, cname in enumerate(concept_names):
-        print(f'\n  {cname}:')
-        for li, lead in enumerate(offsets):
-            pp = concept_preds[ci][li][:, ocean_mask].flatten()
-            tt = concept_targets[ci][li][:, ocean_mask].flatten()
-            valid = ~np.isnan(tt) & ~np.isnan(pp)
-            pp, tt = pp[valid], tt[valid]
-
-            mae  = np.mean(np.abs(pp - tt))
-            rmse = np.sqrt(np.mean((pp - tt) ** 2))
-            # pattern correlation: per timestep spatial r, averaged over time (vectorized)
-            p_all = concept_preds[ci][li][:, ocean_mask]   # (N, ocean_pixels)
-            t_all = concept_targets[ci][li][:, ocean_mask]
-            p_m = np.nanmean(p_all, axis=1, keepdims=True)
-            t_m = np.nanmean(t_all, axis=1, keepdims=True)
-            p_d = p_all - p_m
-            t_d = t_all - t_m
-            num = np.nansum(p_d * t_d, axis=1)
-            denom = np.sqrt(np.nansum(p_d ** 2, axis=1) * np.nansum(t_d ** 2, axis=1))
-            pattern_corr = np.nanmean(np.where(denom > 0, num / denom, np.nan))
-
-            print(f'    Lead {lead}mo | MAE={mae:.4g}  RMSE={rmse:.4g}  PatCorr={pattern_corr:.4f}')
-
-    # --- Spatial correlation maps (one figure per concept) ---
-    print('\nSaving spatial correlation maps...')
-    for ci, cname in enumerate(concept_names):
-        fig, axes = plt.subplots(1, n_leads, figsize=(n_leads * 5, 4), layout='constrained')
-        if n_leads == 1:
-            axes = [axes]
-
-        for li, lead in enumerate(offsets):
-            pp = concept_preds[ci][li]   # (N, Y, X)
-            tt = concept_targets[ci][li]
-
-            # Vectorized Pearson r over time axis for all pixels at once
-            pp_m = np.nanmean(pp, axis=0, keepdims=True)
-            tt_m = np.nanmean(tt, axis=0, keepdims=True)
-            pp_d = pp - pp_m
-            tt_d = tt - tt_m
-            num = np.nansum(pp_d * tt_d, axis=0)
-            denom = np.sqrt(np.nansum(pp_d ** 2, axis=0) * np.nansum(tt_d ** 2, axis=0))
-            corr_map = np.where((denom > 0) & ocean_mask, num / denom, np.nan)
-
-            ax = axes[li]
-            im = ax.imshow(np.ma.masked_invalid(corr_map), cmap='RdYlGn',
-                           vmin=-1, vmax=1, origin='lower', aspect='equal')
-            ax.set_title(f'Lead {lead}mo', fontsize=10)
-            ax.axis('off')
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label('Pearson r')
-
-        fig.suptitle(f'Pattern Correlation — {cname}', fontsize=12)
-        path = f'{output_dir}/concept_corr_{cname}.png'
-        fig.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-        print(f'  Saved {path}')
-
-def concept_correlation(results_path='/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_ZScore_v3'):
-    results = np.load(f'{results_path}/val_preds_lead0.npz', allow_pickle=True)
-    preds = results['preds']
-    concept_preds = results['concept_preds']
-    concept_names = results['concept_names']
-    ocean_mask = results['ocean_mask']
-    n = len(concept_names)
-    fig, ax = plt.subplots(1, n, figsize=(4*n, 3))
-    for i in range(n):
-        corr = stats.pearsonr(preds, concept_preds[i, :, :, :], axis=0).statistic
-        corr[~ocean_mask] = np.nan
-        mean_corr = np.nanmean(corr)
-        im = ax[i].imshow(corr, origin='lower', aspect='auto', vmin=-1, vmax=1, cmap='RdYlBu')
-        plt.colorbar(im, ax=ax[i])
-        ax[i].set_title(f'{concept_names[i]}\n(r = {mean_corr:.2f})') 
-    fig.suptitle('Concept correlation with Prediction')
-    fig.tight_layout()
-    fig.savefig(f'{results_path}/concept_corr')
-
-def concept_weights(model_dir = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_ZScore_v3'):
-    config.read(f'{model_dir}/config.ini')
-    checkpoints = sorted(glob.glob(f'{model_dir}/UNetCBM_epoch*.pt'),
-                       key=lambda p: int(p.split('epoch')[-1].split('.')[0]))
-    ckpt = torch.load(checkpoints[-1], map_location='cpu', weights_only=False)
-    model = get_model()
-    model.load_state_dict(ckpt['model_state_dict'])
-    weights = model.output_head[0].weight.squeeze()
-    results = np.load(f'{model_dir}/val_preds_lead0.npz', allow_pickle=True)
-    concept_names = results['concept_names']
-    for name, w in zip(concept_names, weights):
-        print(f'{name}: {w.item():.4f}')
-    concept_preds = results['concept_preds']
-    weights_np = weights.detach().numpy()
-    contributions = concept_preds * weights_np[:, None, None, None]
-    mean_contrib = contributions.mean(axis=1)
-    ocean_mask = results['ocean_mask']
-    n = mean_contrib.shape[0]
-    fig, ax = plt.subplots(1, n, figsize=(4*n, 3))
-    for i in range(n):
-        contrib = mean_contrib[i, :, :]
-        contrib[~ocean_mask] = np.nan
-        im = ax[i].imshow(contrib, origin='lower', aspect='auto', cmap='RdYlBu')
-        plt.colorbar(im, ax=ax[i])
-        ax[i].set_title(f'{concept_names[i]} weight: {weights_np[i]}') 
-    fig.suptitle('Concept contribution to Prediction')
-    fig.tight_layout()
-    fig.savefig(f'{model_dir}/concept_contrib')
-
-def plot_pred_anomaly(model_dir='/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.15_ep50_lr0.001_bs64_MSELoss_ZScore_v2'):
-    results = np.load(f'{model_dir}/val_preds_lead0.npz')
-    pred0 = results['preds'][0]
-    target0 = results['targets'][0]
-    ocean_mask = results['ocean_mask']
-    pred0 = np.ma.masked_where(~ocean_mask, pred0)
-
-    # find the member and yr and month for pred0 and target0
-    # val preds index 0: member=0%n_members=0, time=0//n_members=0 within val set
-    import pandas as pd
-    dates = pd.date_range(start=config['DATASET']['start'], end=config['DATASET']['end'], freq='MS')
-    window = config.getint('DATASET', 'context_window')
-    offset = try_cast(config['DATASET']['offset'])[0]
-    n_members = len(try_cast(config['DATASET']['members']))
-    n_times = len(dates) - window - offset + 1
-    train_time_end = int(config.getfloat('MODEL.HYPERPARAMETERS', 'train_frac') * n_times)
-    target_date = dates[train_time_end + window - 1 + offset]
-    member = 0
-    yr = target_date.year
-    month = target_date.month
-
-    # NA bounds
-    lon_bounds=(-80, 20)
-    lat_bounds=(20, 66)
-
-    # NA climatology 
-    clim = xr.open_dataset('/quobyte/maikesgrp/sanah/climatologies/vomlhc_climatology_1979_2018.nc')
-    mask = (
-                (clim.nav_lon >= lon_bounds[0]) & (clim.nav_lon <= lon_bounds[1]) &
-                (clim.nav_lat >= lat_bounds[0]) & (clim.nav_lat <= lat_bounds[1])
-            )
-    y_inds = mask.any(dim="x")
-    x_inds = mask.any(dim="y")
-    clim_na = clim.isel(y=y_inds, x=x_inds)
-    clim_na_month = clim_na.sel(month=month).vomlhc.isel(y=slice(0, 302), x=slice(0, 400))
-
-    # calculating anomaly 
-    pred0_a = pred0 - clim_na_month 
-    target0_a = target0 - clim_na_month
-
-    # threshold with 90th percentile
-    thresh = xr.open_dataset(f'/quobyte/maikesgrp/sanah/mlhc_anomaly/mlhc_anomalies_90th_percentile_detrended_opa{member}.nc')
-    thresh_na = thresh.isel(y=y_inds, x=x_inds)
-    thresh_na_month = thresh_na.sel(time_counter=month).mlhc_anomaly.isel(y=slice(0, 302), x=slice(0, 400))
-    
-    # binary threshold for pred0_a and target0_a but preserve nans for land 
-    pred0_binary = np.where(ocean_mask, (pred0_a > thresh_na_month).astype(float), np.nan)                                                                           
-    target0_binary = np.where(ocean_mask, (target0_a > thresh_na_month).astype(float), np.nan)
-
-    target0_masked = np.where(ocean_mask, target0, np.nan)
-    pred0_masked = np.where(ocean_mask, np.array(pred0), np.nan)
-
-    fig, ax = plt.subplots(2, 2, figsize=(10, 6))
-    im00 = ax[0, 0].imshow(target0_masked, origin='lower', cmap='RdYlBu_r')
-    im01 = ax[0, 1].imshow(pred0_masked, origin='lower', cmap='RdYlBu_r')
-    im10 = ax[1, 0].imshow(target0_binary, origin='lower', cmap='RdYlBu_r', vmin=0, vmax=1)
-    im11 = ax[1, 1].imshow(pred0_binary, origin='lower', cmap='RdYlBu_r', vmin=0, vmax=1)
-    plt.colorbar(im00, ax=ax[0, 0])
-    plt.colorbar(im01, ax=ax[0, 1])
-    plt.colorbar(im10, ax=ax[1, 0])
-    plt.colorbar(im11, ax=ax[1, 1])
-    ax[0, 0].set_title(f'Target vomlhc ({yr}-{month:02d})')
-    ax[0, 1].set_title(f'Predicted vomlhc ({yr}-{month:02d})')
-    ax[1, 0].set_title('Target binary anomaly')
-    ax[1, 1].set_title('Predicted binary anomaly')
-    for a in ax.flat:
-        a.axis('off')
-    fig.tight_layout()
-    fig.savefig('vomlhc_anomaly_event_0')
-
+# comparing mlhc and sst events (not really inference)
 def compare_mlhc_sst():
     # NA crop indices from mesh
     lon_bounds = (-80, 20)
@@ -797,6 +307,7 @@ def compare_mlhc_sst():
     fig.tight_layout()
     fig.savefig('comparing_mhw_timeseries')
 
+# plotting pearonr spatially and temporally over the entire validation set
 def plot_pearsonr(model_dir):
     if model_dir is None:
         model_dir = find_output_dir()
@@ -878,6 +389,7 @@ def plot_pearsonr(model_dir):
     for i in range(n_concepts):
         compute_and_plot(concept_preds[i], concept_targets[i], f'Pearson Correlation Coefficient on Validation for {concept_names[i]}', f'{model_dir}/pearsonr_abs_{concept_names[i]}.png')
 
+# comparing free pred monthly climatology with predicted and target mlhc
 def compare_free_pred(model_dir):
     month_names = ["January", "February", "March", "April", "May", "June", 
           "July", "August", "September", "October", "November", "December"]
@@ -939,206 +451,319 @@ def compare_free_pred(model_dir):
     fig2.savefig(f'{model_dir}/mlhc_pred_clim.png', bbox_inches='tight')
     fig3.savefig(f'{model_dir}/bias_clim.png', bbox_inches='tight')
 
-def pred_concept_clim(model_dir=None):
-    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    if model_dir is None:
-        model_dir = find_output_dir()
-    results = np.load(os.path.join(model_dir, 'val_preds_lead0.npz'), allow_pickle=True)
-    concept_names = results['concept_names']
-    ocean_mask = results['ocean_mask']   # (Y, X) bool
-    land_mask = ~ocean_mask
-
-    n_years = results['concept_preds'].shape[1]   # N time steps
-    start_month = 4   # May (0-indexed), adjust if needed
-    months = (np.arange(n_years) + start_month) % 12
-
-    for j, cname in enumerate(concept_names):
-        cp = results['concept_preds'][j]    # (N, Y, X)
-        ct = results['concept_targets'][j]  # (N, Y, X)
-
-        # Compute monthly climatologies
-        Y, X = cp.shape[-2], cp.shape[-1]
-        clim_pred   = np.zeros((12, Y, X))
-        clim_target = np.zeros((12, Y, X))
-        for i in range(12):
-            idx = np.where(months == i)[0]
-            clim_pred[i]   = cp[idx].mean(axis=0)
-            clim_target[i] = ct[idx].mean(axis=0)
-
-        # Anomalies: subtract per-pixel monthly climatology
-        anom_pred   = np.zeros_like(cp)
-        anom_target = np.zeros_like(ct)
-        for i in range(12):
-            idx = np.where(months == i)[0]
-            anom_pred[idx]   = cp[idx] - clim_target[i]
-            anom_target[idx] = ct[idx] - clim_target[i]
-
-        # Per-month climatology pearsonr and anomaly pearsonr (over ocean pixels)
-        clim_r = np.zeros(12)
-        anom_r = np.zeros(12)
-        for i in range(12):
-            idx = np.where(months == i)[0]
-            p_c = clim_pred[i][ocean_mask];   t_c = clim_target[i][ocean_mask]
-            p_a = anom_pred[idx][:, ocean_mask].ravel()
-            t_a = anom_target[idx][:, ocean_mask].ravel()
-            valid_c = np.isfinite(p_c) & np.isfinite(t_c)
-            valid_a = np.isfinite(p_a) & np.isfinite(t_a)
-            clim_r[i] = pearsonr(p_c[valid_c], t_c[valid_c])[0]
-            anom_r[i] = pearsonr(p_a[valid_a], t_a[valid_a])[0]
-
-        # Separate shared color limits per row
-        def row_lims(data):
-            vals = data[:, ocean_mask].ravel()
-            return np.nanpercentile(vals, 2), np.nanpercentile(vals, 98)
-        vmin_p, vmax_p = row_lims(clim_pred)
-        vmin_t, vmax_t = row_lims(clim_target)
-
-        # Figure: 2 rows (pred/target) x 12 months, climatology maps + anomaly r in title
-        fig = plt.figure(figsize=(27, 5))
-        gs = fig.add_gridspec(2, 13, hspace=0.05, wspace=0.02,
-                              width_ratios=[1]*12 + [0.04])
-        fig.suptitle(f'{cname}  —  predicted (top) vs target (bottom) monthly climatology',
-                     fontsize=11, y=1.01)
-
-        im_p = im_t = None
-        for i in range(12):
-            for row, (data, vmin, vmax) in enumerate([
-                (clim_pred[i],   vmin_p, vmax_p),
-                (clim_target[i], vmin_t, vmax_t),
-            ]):
-                ax = fig.add_subplot(gs[row, i])
-                im = ax.imshow(np.ma.masked_where(land_mask, data),
-                               origin='lower', vmin=vmin, vmax=vmax, cmap='RdBu_r')
-                ax.set_xticks([])
-                ax.set_yticks([])
-                if row == 0:
-                    ax.set_title(f'{month_names[i]}\nclim r={clim_r[i]:.2f}  anom r={anom_r[i]:.2f}',
-                                 fontsize=6.5)
-                    im_p = im
-                else:
-                    im_t = im
-                if i == 0:
-                    ax.set_ylabel('Predicted' if row == 0 else 'Target', fontsize=8)
-
-        # One colorbar per row
-        cax_p = fig.add_subplot(gs[0, 12])
-        cax_t = fig.add_subplot(gs[1, 12])
-        fig.colorbar(im_p, cax=cax_p).ax.tick_params(labelsize=7)
-        fig.colorbar(im_t, cax=cax_t).ax.tick_params(labelsize=7)
-
-        print(f'{cname}  clim r: {clim_r.mean():.3f} ({clim_r.min():.2f}–{clim_r.max():.2f})'
-              f'  anom r: {anom_r.mean():.3f} ({anom_r.min():.2f}–{anom_r.max():.2f})')
-
-        save_path = os.path.join(model_dir, f'{cname}_clim_t.png')
-        fig.savefig(save_path, dpi=120, bbox_inches='tight')
-        plt.close(fig)
-        print(f'  saved {save_path}')
-
-
-def pred_clim(model_dir=None):
-    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    if model_dir is None:
-        model_dir = find_output_dir()
-    results = np.load(os.path.join(model_dir, 'val_preds_lead0.npz'), allow_pickle=True)
-    ocean_mask = results['ocean_mask']
-    land_mask = ~ocean_mask
-
-    cp = results['preds']    # (N, Y, X)
-    ct = results['targets']  # (N, Y, X)
-
-    n_years = cp.shape[0]
-    start_month = 4  # May (0-indexed)
-    months = (np.arange(n_years) + start_month) % 12
-
-    Y, X = cp.shape[-2], cp.shape[-1]
-    clim_pred   = np.zeros((12, Y, X))
-    clim_target = np.zeros((12, Y, X))
+# helper function to caluclate monthly and seasonal acc 
+def calculate_correlation(p_val, t_val, t_all, val_months, all_months, label):
+    months_names = ["January", "February", "March", "April", "May", "June", 
+                    "July", "August", "September", "October", "November", "December"]
+    
+    anom_store = {'pred': {}, 'target': {}}
+    
+    print(f"\n=== Evaluating: {label} ===")
+    
+    # monthly Loop
     for i in range(12):
-        idx = np.where(months == i)[0]
-        clim_pred[i]   = cp[idx].mean(axis=0)
-        clim_target[i] = ct[idx].mean(axis=0)
+        # climatology from FULL dataset
+        m_clim = np.nanmean(t_all[all_months == i], axis=0)
+        
+        # validation slices and calculate anomalies
+        mask = (val_months == i)
+        m_p_anom = p_val[mask] - m_clim
+        m_t_anom = t_val[mask] - m_clim
+        
+        anom_store['pred'][i] = m_p_anom
+        anom_store['target'][i] = m_t_anom
+        
+        # pearson R
+        m_r = pearsonr(m_p_anom, m_t_anom, axis=0)
+        print(f"{months_names[i]} - Mean ACC: {np.nanmean(m_r.statistic):.4f}")
 
-    anom_pred   = np.zeros_like(cp)
-    anom_target = np.zeros_like(ct)
+    # seasonal pooling
+    seasons = {"DJF": [11, 0, 1], "MAM": [2, 3, 4], "JJA": [5, 6, 7], "SON": [8, 9, 10]}
+    print(f"\n--- Seasonal ACC (Pooled) for {label} ---")
+    for sea_name, m_indices in seasons.items():
+        s_p = np.concatenate([anom_store['pred'][m] for m in m_indices], axis=0)
+        s_t = np.concatenate([anom_store['target'][m] for m in m_indices], axis=0)
+        s_r = pearsonr(s_p, s_t, axis=0)
+        print(f"{sea_name} - Mean ACC: {np.nanmean(s_r.statistic):.4f}")
+
+# acc for specific model
+def model_acc(model_dir):
+    results = np.load(f'{model_dir}/all_preds.npz', allow_pickle=True)
+    
+    # getting main target
+    out_mean, out_std = results['output_mean'], results['output_std']
+    preds = results['preds'] * out_std + out_mean
+    targets = results['targets'] * out_std + out_mean
+
+    # getting concepts
+    c_preds = results['concept_preds']
+    c_targets = results['concept_targets']
+    c_names = results['concept_names']
+
+    val_start = 1852
+    all_months = np.tile((np.arange(463) + 6) % 12, 5)
+    val_months = all_months[val_start:]
+
+    # corr for mlhc
+    calculate_correlation(preds[val_start:], targets[val_start:], targets, 
+                          val_months, all_months, "MLHC Output")
+
+    # corr for each concept
+    for j, name in enumerate(c_names):
+        p_val_c = c_preds[j, val_start:]
+        t_val_c = c_targets[j, val_start:]
+        t_all_c = c_targets[j, :]
+        
+        calculate_correlation(p_val_c, t_val_c, t_all_c, 
+                              val_months, all_months, f"Concept: {name}")
+
+# denormalizing acc calculation helper
+def calculate_correlation_denorm(p_val, t_val, t_all, val_months, all_months, label):
+    
+    months_names = ["January", "February", "March", "April", "May", "June", 
+                    "July", "August", "September", "October", "November", "December"]
+    
+    anom_store = {'pred': {}, 'target': {}}
+    
+    print(f"\n=== Evaluating: {label} (Physical Units) ===")
+    
+    # Monthly Loop
     for i in range(12):
-        idx = np.where(months == i)[0]
-        anom_pred[idx]   = cp[idx] - clim_target[i]
-        anom_target[idx] = ct[idx] - clim_target[i]
+        # 1. Climatology from FULL denormalized dataset
+        m_clim = np.nanmean(t_all[all_months == i], axis=0)
+        
+        # 2. Extract Validation slices and calculate physical anomalies
+        mask = (val_months == i)
+        m_p_anom = p_val[mask] - m_clim
+        m_t_anom = t_val[mask] - m_clim
+        
+        anom_store['pred'][i] = m_p_anom
+        anom_store['target'][i] = m_t_anom
+        
+        # 3. Monthly Pearson R (Temporal)
+        m_r = pearsonr(m_p_anom, m_t_anom, axis=0)
+        print(f"{months_names[i]:<10} - Mean ACC: {np.nanmean(m_r.statistic):.4f}")
 
-    clim_r = np.zeros(12)
-    anom_r = np.zeros(12)
-    for i in range(12):
-        idx = np.where(months == i)[0]
-        p_c = clim_pred[i][ocean_mask];   t_c = clim_target[i][ocean_mask]
-        p_a = anom_pred[idx][:, ocean_mask].ravel()
-        t_a = anom_target[idx][:, ocean_mask].ravel()
-        valid_c = np.isfinite(p_c) & np.isfinite(t_c)
-        valid_a = np.isfinite(p_a) & np.isfinite(t_a)
-        clim_r[i] = pearsonr(p_c[valid_c], t_c[valid_c])[0]
-        anom_r[i] = pearsonr(p_a[valid_a], t_a[valid_a])[0]
+    # Seasonal Pooling
+    seasons = {"DJF": [11, 0, 1], "MAM": [2, 3, 4], "JJA": [5, 6, 7], "SON": [8, 9, 10]}
+    print(f"\n--- Seasonal ACC (Pooled) for {label} ---")
+    for sea_name, m_indices in seasons.items():
+        s_p = np.concatenate([anom_store['pred'][m] for m in m_indices], axis=0)
+        s_t = np.concatenate([anom_store['target'][m] for m in m_indices], axis=0)
+        s_r = pearsonr(s_p, s_t, axis=0)
+        print(f"{sea_name} - Mean ACC: {np.nanmean(s_r.statistic):.4f}")
 
-    def row_lims(data):
-        vals = data[:, ocean_mask].ravel()
-        return np.nanpercentile(vals, 2), np.nanpercentile(vals, 98)
-    vmin_p, vmax_p = row_lims(clim_pred)
-    vmin_t, vmax_t = row_lims(clim_target)
+# acc but for denormalzed concepts and targets 
+def model_acc_denorm(model_dir):
+    results = np.load(f'{model_dir}/all_preds.npz', allow_pickle=True)
+    
+    # 1. Denormalize Main MLHC Output
+    # Broadcasting (1,) or (1, Y, X) over (Time, Y, X)
+    out_mean, out_std = results['output_mean'], results['output_std']
+    preds = (results['preds'] * out_std) + out_mean
+    targets = (results['targets'] * out_std) + out_mean
 
-    fig = plt.figure(figsize=(27, 5))
-    gs = fig.add_gridspec(2, 13, hspace=0.05, wspace=0.02,
-                          width_ratios=[1]*12 + [0.04])
-    fig.suptitle('MLHC  —  predicted (top) vs target (bottom) monthly climatology',
-                 fontsize=11, y=1.01)
+    # 2. Denormalize Concepts
+    # Shape of concept_preds: (Time, Num_Concepts, Y, X)
+    # Shape of concept_mean: (Num_Concepts, 1, 1) or (Num_Concepts, Y, X)
+    c_preds_raw = results['concept_preds']
+    c_targets_raw = results['concept_targets']
+    c_mean = results['concept_mean']
+    c_std = results['concept_std']
+    c_names = results['concept_names']
 
-    im_p = im_t = None
-    for i in range(12):
-        for row, (data, vmin, vmax) in enumerate([
-            (clim_pred[i],   vmin_p, vmax_p),
-            (clim_target[i], vmin_t, vmax_t),
-        ]):
-            ax = fig.add_subplot(gs[row, i])
-            im = ax.imshow(np.ma.masked_where(land_mask, data),
-                           origin='lower', vmin=vmin, vmax=vmax, cmap='RdBu_r')
-            ax.set_xticks([])
-            ax.set_yticks([])
-            if row == 0:
-                ax.set_title(f'{month_names[i]}\nclim r={clim_r[i]:.2f}  anom r={anom_r[i]:.2f}',
-                             fontsize=6.5)
-                im_p = im
-            else:
-                im_t = im
-            if i == 0:
-                ax.set_ylabel('Predicted' if row == 0 else 'Target', fontsize=8)
+    # Indices and slicing
+    val_start = 1852
+    all_months = np.tile((np.arange(463) + 6) % 12, 5)
+    val_months = all_months[val_start:]
 
-    cax_p = fig.add_subplot(gs[0, 12])
-    cax_t = fig.add_subplot(gs[1, 12])
-    fig.colorbar(im_p, cax=cax_p).ax.tick_params(labelsize=7)
-    fig.colorbar(im_t, cax=cax_t).ax.tick_params(labelsize=7)
+    # --- Run for MLHC ---
+    calculate_correlation_denorm(preds[val_start:], targets[val_start:], targets, 
+                                 val_months, all_months, "MLHC Output")
 
-    print(f'MLHC  clim r: {clim_r.mean():.3f} ({clim_r.min():.2f}–{clim_r.max():.2f})'
-          f'  anom r: {anom_r.mean():.3f} ({anom_r.min():.2f}–{anom_r.max():.2f})')
+    # --- Run for each Concept ---
+    for j, name in enumerate(c_names):
+        # Denormalize specific concept j
+        # We index j first, then multiply/add to ensure broadcasting matches (Time, Y, X)
+        p_val_c = (c_preds_raw[val_start:, j] * c_std[j]) + c_mean[j]
+        t_val_c = (c_targets_raw[val_start:, j] * c_std[j]) + c_mean[j]
+        t_all_c = (c_targets_raw[:, j] * c_std[j]) + c_mean[j]
+        
+        calculate_correlation_denorm(p_val_c, t_val_c, t_all_c, 
+                                     val_months, all_months, f"Concept: {name}")
 
-    save_path = os.path.join(model_dir, 'mlhc_clim_t.png')
-    fig.savefig(save_path, dpi=120, bbox_inches='tight')
-    plt.close(fig)
-    print(f'  saved {save_path}')
+# reconstructing the time series of the validation and test set (averaged spatially, comparing to target)
+# do this per opa so the the plot looks smooth
+def plot_ensemble_time_series(model_dir, split='val', n_members=5):
+    
+    # load data
+    data_path = os.path.join(model_dir, f'all_preds.npz')
+    data = np.load(data_path)
+    
+    preds = data['preds'][1852:]
+    targets = data['targets'][1852:]
+    
+    # reshape to separate opa since they are interleaved
+    # (time_steps, opa, y, x)
+    n_steps = len(preds) // n_members
+    preds_ens = preds[:n_steps * n_members].reshape(n_steps, n_members, 302, 400)
+    targets_ens = targets[:n_steps * n_members].reshape(n_steps, n_members, 302, 400)
+    
+    # calculate mean over basin
+    # resulting shape: (time_steps, n_members)
+    basin_preds = np.nanmean(preds_ens, axis=(2, 3))
+    basin_targets = np.nanmean(targets_ens, axis=(2, 3))
+    
+    # calculate ensemble mean
+    ens_mean = np.mean(basin_preds, axis=1)
+    ens_std = np.std(basin_preds, axis=1)
+    # target remains the same for all members at each time step (just opa0)
+    target_line = basin_targets[:, 0] 
+    
+    # plotting
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    time_idx = np.arange(len(ens_mean))
+    
+    # plot the spread 
+    ax.fill_between(time_idx, ens_mean - ens_std, ens_mean + ens_std, 
+                    color='orange', alpha=0.3, label='Ensemble Spread ($\sigma$)')
+    
+    # mean prediction
+    ax.plot(time_idx, ens_mean, color='darkorange', linewidth=2, label='ConceptBUOY')
+    
+    # ground truth
+    ax.plot(time_idx, target_line, color='blue', linestyle='--', linewidth=1.5, label='ORAS5 Target')
+    
+    ax.set_title(f"Basin-Averaged MLHC Evolution ({split.capitalize()} Set)", fontsize=14)
+    ax.set_ylabel("Mixed Layer Heat Content (Standardized Units)")
+    ax.set_xlabel("Months in Test Period")
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.legend(loc='upper left', frameon=False)
+    
+    plt.tight_layout()
+    
+    # save
+    save_path = os.path.join(model_dir, f'ensemble_ts_{split}.png')
+    plt.savefig(save_path, dpi=300)
+    print(f"Figure saved to: {save_path}")
+    
+    return ens_mean, target_line
+
+# same function as above, but for the concepts
+def plot_concept_ensemble_ts(model_dir, split='val', n_members=5):
+   
+    data_path = os.path.join(model_dir, 'all_preds.npz')
+    data = np.load(data_path)
+    
+    # load concept data 
+    # the same temporal slice [1852:] as MLHC plot
+    c_preds = data[f'concept_preds'][:, 1852:, :, :]
+    c_targets = data[f'concept_targets'][:, 1852:, :, :]
+    concept_names = data['concept_names']
+    
+    num_concepts = c_preds.shape[0]
+    n_steps = c_preds.shape[1] // n_members
+    
+    if concept_names is None:
+        concept_names = [f"Concept {i}" for i in range(num_concepts)]
+
+    for i in range(num_concepts):
+        # same reshaping as above, per concept
+        this_c_pred = c_preds[i, :n_steps*n_members].reshape(n_steps, n_members, 302, 400)
+        this_c_targ = c_targets[i, :n_steps*n_members].reshape(n_steps, n_members, 302, 400)
+        
+        # basin average
+        basin_p = np.nanmean(this_c_pred, axis=(2, 3))
+        basin_t = np.nanmean(this_c_targ, axis=(2, 3))
+        
+        # mean
+        mu = np.mean(basin_p, axis=1)
+        sigma = np.std(basin_p, axis=1)
+        truth = basin_t[:, 0]
+        
+        # plotting
+        fig, ax = plt.subplots(figsize=(10, 4))
+        time_idx = np.arange(len(mu))
+        
+        ax.fill_between(time_idx, mu - sigma, mu + sigma, color='teal', alpha=0.2, label='Ensemble Spread')
+        ax.plot(time_idx, mu, color='teal', linewidth=2, label=f'Predicted {concept_names[i]}')
+        ax.plot(time_idx, truth, color='black', linestyle='--', alpha=0.7, label='Target')
+        
+        ax.set_title(f"Mechanism Reconstruction: {concept_names[i]}", fontsize=12, fontweight='bold')
+        ax.set_ylabel("Standardized Concept")
+        ax.set_xlabel("Months in Test Period")
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.legend(frameon=False, loc='upper left')
+        
+        plt.tight_layout()
+        save_path = os.path.join(model_dir, f'concept_{i}_ts.png')
+        plt.savefig(save_path, dpi=300)
+        plt.close() # Close to save memory
+        print(f"Saved concept plot: {save_path}")
 
 
 if __name__ == '__main__':
-    model_dir = '/quobyte/maikesgrp/mlhc_cbm/runs_040826/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v3'
-    pred_clim('/quobyte/maikesgrp/mlhc_cbm/runs_040826/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v3')
-    pred_concept_clim('/quobyte/maikesgrp/mlhc_cbm/runs_040826/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v3')
-    compare_free_pred(model_dir)
-    # input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
-   #model_dir = '/quobyte/maikesgrp/mlhc_cbm/runs_040826/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v2'
-    visualize(output_dir=model_dir)
-    # save_val_preds(model_dir=model_dir, input_norm=input_norm, concept_norm=concept_norm, output_norm=output_norm, val_loader=val_loader)
-    # plot_sample(model_dir=model_dir, input_norm=input_norm, concept_norm=concept_norm, output_norm=output_norm, val_loader=val_loader)
-    plot_pearsonr(model_dir=model_dir)
-    
+    # paths = [
+    # "/quobyte/maikesgrp/mlhc_cbm/runs_041326/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore",
+    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.0_ep101_lr0.001_bs64_L1Loss_ZScore_v4",
+    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5",
+    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v6",
+    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v7",
+    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v8",
+    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v9",
+    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v10"]
+    # for path in paths:
+    #     ckpt = ckpt = torch.load(f'{path}/UNetCBM_epoch100.pt', map_location='cpu', weights_only=False)
+    #     print(path)
+    #     print(ckpt['model_state_dict']['output_head.weight'].squeeze())
+    # breakpoint()
+    # plot_concept_ensemble_ts('/quobyte/maikesgrp/mlhc_cbm/runs_041326/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore')
+    # breakpoint()
+    #model_acc('/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
+    #plot_concept_ensemble_ts('/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
+    #plot_ensemble_time_series('/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
+    # breakpoint()
+    from torch.utils.data import DataLoader                                                                                                                  
+
+    model_dirs = ['/quobyte/maikesgrp/mlhc_cbm/runs_040726/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v2']
+    input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
+    full_loader = DataLoader(train_loader.dataset.dataset, batch_size=64, shuffle=False, num_workers=0)  
+    for model_dir in model_dirs:       
+        save_all_preds(model_dir=model_dir, input_norm=input_norm,                                   
+                        concept_norm=concept_norm, output_norm=output_norm,                           
+                        full_loader=full_loader)               
+    # save_all_preds(model_dir=model_dir, input_norm=input_norm,
+    #                    concept_norm=concept_norm, output_norm=output_norm,
+    #                    full_loader=full_loader)
     
 
+    # model_dirs = ['/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore',
+    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v2',
+    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v3'
+    # ]
+    # for model_dir in model_dirs:
+    #     pred_clim(model_dir=model_dir)
+    #     pred_concept_clim(model_dir=model_dir)
+    
+    # model_dirs = ['/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v1',
+    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v2',
+    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v3']
+    # for model_dir in model_dirs:
+    #     pred_clim(model_dir=model_dir)
+
+    # config.read(f'{model_dirs[0]}/config.ini')
+    # input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
+    # full_loader = DataLoader(train_loader.dataset.dataset, batch_size=64, shuffle=False)
+
+    # for model_dir in model_dirs:
+    #     print(f'Saving predictions for {model_dir}')
+    #     save_all_preds(model_dir=model_dir, input_norm=input_norm,
+    #                    concept_norm=concept_norm, output_norm=output_norm,
+    #                    full_loader=full_loader)
+    
     #MODEL_DIR = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.15_ep50_lr0.001_bs64_MSELoss_ZScore_v2'
     #save_all_preds(model_dir=MODEL_DIR)
     #compute_mhw_events(results_path=MODEL_DIR)

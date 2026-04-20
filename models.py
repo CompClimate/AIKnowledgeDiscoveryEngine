@@ -86,12 +86,10 @@ class Encoder(nn.Module):
             out_ch = channels[i + 1]
             self.conv_layers.append(
                 nn.Sequential(
-                    # single conv (original)
                     nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
                     nn.Dropout2d(dropout),
-                    # second conv for double-conv UNet:
                     nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
@@ -126,12 +124,10 @@ class Decoder(nn.Module):
 
             self.conv_layers.append(
                 nn.Sequential(
-                    # single conv (original)
                     nn.Conv2d(out_ch + skip_ch, out_ch, 3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
                     nn.Dropout2d(dropout),
-                    # second conv for double-conv UNet:
                     nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
                     nn.BatchNorm2d(out_ch),
                     nn.ReLU(inplace=True),
@@ -155,15 +151,14 @@ class Decoder(nn.Module):
 class UNetCBM(nn.Module):
     def __init__(self, n_features, n_concepts, output_dim, n_free_concepts=0, channels_list=[32, 64, 128, 256]):  # wider: [64, 128, 256, 512]
         super().__init__()
-        self.n_features = n_features  # This is actually T*V in PointwiseCBM
+        self.n_features = n_features  # this is actually T*V in PointwiseCBM
         self.n_concepts = n_concepts
         self.n_free_concepts = n_free_concepts
         self.output_dim = output_dim
 
-        # Encoder takes n_features as input (which is T*V concatenated)
+        # encoder takes n_features as input (which is T*V concatenated)
         self.encoder = Encoder(n_features, channels_list)
 
-        # UNet bottleneck (single conv — add a second identical block below to deepen)
         bottleneck_ch = channels_list[-1]
         self.bottleneck = nn.Sequential(
             nn.Conv2d(bottleneck_ch, bottleneck_ch, 3, padding=1),
@@ -174,29 +169,20 @@ class UNetCBM(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        # Decoder (same number of stages as encoder)
+        # decoder (same number of stages as encoder)
         decoder_channels = [channels_list[-1]] + channels_list[::-1]
         self.decoder = Decoder(decoder_channels[0], decoder_channels[1:], channels_list)
 
-        # Supervised concept prediction head
+        # supervised concept prediction head
         self.concept_head = nn.Conv2d(channels_list[0], n_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Skip connection: raw input → concept space (bypasses UNet) — REMOVED: caused concept heads to shortcut supervision
-        # self.concept_skip = nn.Conv2d(n_features, n_concepts * output_dim, kernel_size=1)
-
-        # Free (unsupervised) concept head
+        # free (unsupervised) concept head
         if n_free_concepts > 0:
             self.free_concept_head = nn.Conv2d(channels_list[0], n_free_concepts * output_dim, kernel_size=3, padding=1)
 
-        # Output head: linear combination of supervised concepts only
-        self.output_head = nn.Conv2d(n_concepts * output_dim, output_dim, kernel_size=1)
-
-        # Residual free output head: separate head for free concepts, added to pred_sup
-        # Revert to additive (no residual): replace both heads with a single head over all concepts:
-        #   total_concept_channels = (n_concepts + n_free_concepts) * output_dim
-        #   self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
-        if n_free_concepts > 0:
-            self.free_output_head = nn.Conv2d(n_free_concepts * output_dim, output_dim, kernel_size=1)
+        # output head: linear combination of supervised + free concepts
+        total_concept_channels = (n_concepts + n_free_concepts) * output_dim
+        self.output_head = nn.Conv2d(total_concept_channels, output_dim, kernel_size=1)
 
     def forward(self, x):
         # Input shape: (B, V, T, Y, X)
@@ -232,19 +218,11 @@ class UNetCBM(nn.Module):
         else:
             free = None
 
-        # Residual: supervised concepts → pred_sup, free concepts → pred_free, output = sum
-        pred_sup = self.output_head(concepts)   # (B, output_dim, Y, X)
-        if free is not None:
-            pred_free = self.free_output_head(free)
-            output = pred_sup + pred_free
-        else:
-            pred_free = None
-            output = pred_sup
-
-        # Revert to additive (free concept as extra linear channel, no residual):
-        # all_concepts = torch.cat([concepts, free], dim=1) if free is not None else concepts
-        # output = self.output_head(all_concepts)
-        # pred_sup = output; pred_free = None
+        # Additive: free concept is extra linear channel in output head
+        all_concepts = torch.cat([concepts, free], dim=1) if free is not None else concepts
+        output = self.output_head(all_concepts)
+        pred_sup = output
+        pred_free = None
 
         # Crop to original spatial dimensions
         concepts = concepts[:, :, :Y, :X]
@@ -268,118 +246,5 @@ class UNetCBM(nn.Module):
         if pred_free is not None:
             pred_free = pred_free.unsqueeze(1)
 
-        return output, concepts, free, pred_sup, pred_free
+        return output, concepts, free 
 
-def test_models_match():
-    """Test if PointwiseCBM and UNetCBM produce similar outputs"""
-    
-    # Hyperparameters
-    batch_size = 1
-    n_features = 5  # V
-    lead_times = 6  # T
-    n_concepts = 6
-    output_dim = 3
-    height = 302  # Y
-    width = 400   # X
-    hidden_dim = 64
-    
-    # Create dummy input: (B, V, T, Y, X)
-    x = torch.randn(batch_size, n_features, lead_times, height, width)
-    
-    # Initialize both models
-    # Create models with n_features = V*T
-    unet = UNetCBM(n_features=n_features*lead_times, n_concepts=n_concepts, output_dim=output_dim)
-    pointwise = PointwiseCBM(n_features=n_features*lead_times, n_concepts=n_concepts, hidden_dim=hidden_dim, output_dim=output_dim)
-    
-    # Set both to eval mode
-    pointwise.eval()
-    unet.eval()
-    
-    # Forward pass
-    with torch.no_grad():
-        output_pw, concepts_pw = pointwise(x)
-        output_unet, concepts_unet = unet(x)
-    
-    # Check shapes
-    print("=" * 60)
-    print("OUTPUT SHAPES")
-    print("=" * 60)
-    print(f"Input shape: {x.shape}")
-    print(f"\nPointwiseCBM:")
-    print(f"  Output shape: {output_pw.shape}")
-    print(f"  Concepts shape: {concepts_pw.shape}")
-    print(f"\nUNetCBM:")
-    print(f"  Output shape: {output_unet.shape}")
-    print(f"  Concepts shape: {concepts_unet.shape}")
-    
-    # Check if shapes match
-    print("\n" + "=" * 60)
-    print("SHAPE COMPATIBILITY")
-    print("=" * 60)
-    shapes_match = (output_pw.shape == output_unet.shape and 
-                    concepts_pw.shape == concepts_unet.shape)
-    print(f"Shapes match: {shapes_match}")
-    if not shapes_match:
-        print(f"  Output shape mismatch: {output_pw.shape} vs {output_unet.shape}")
-        print(f"  Concepts shape mismatch: {concepts_pw.shape} vs {concepts_unet.shape}")
-    
-    # Check value ranges
-    print("\n" + "=" * 60)
-    print("VALUE RANGES")
-    print("=" * 60)
-    print(f"PointwiseCBM output: min={output_pw.min():.4f}, max={output_pw.max():.4f}, mean={output_pw.mean():.4f}")
-    print(f"UNetCBM output:      min={output_unet.min():.4f}, max={output_unet.max():.4f}, mean={output_unet.mean():.4f}")
-    print(f"\nPointwiseCBM concepts: min={concepts_pw.min():.4f}, max={concepts_pw.max():.4f}, mean={concepts_pw.mean():.4f}")
-    print(f"UNetCBM concepts:      min={concepts_unet.min():.4f}, max={concepts_unet.max():.4f}, mean={concepts_unet.mean():.4f}")
-    
-    # Compute MSE between outputs (they won't be identical, but should be in same ballpark)
-    print("\n" + "=" * 60)
-    print("OUTPUT COMPARISON")
-    print("=" * 60)
-    output_mse = torch.mean((output_pw - output_unet) ** 2).item()
-    concepts_mse = torch.mean((concepts_pw - concepts_unet) ** 2).item()
-    print(f"MSE between outputs:  {output_mse:.6f}")
-    print(f"MSE between concepts: {concepts_mse:.6f}")
-    print("\nNote: MSE will be high since models have different random weights.")
-    print("The important thing is that shapes and formats match!")
-
-
-def test_with_same_weights():
-    """Test with identical input/output to verify interface matches"""
-    
-    batch_size = 1
-    n_features = 2
-    lead_times = 3
-    n_concepts = 4
-    output_dim = 1
-    height = 16
-    width = 16
-    
-    x = torch.randn(batch_size, n_features, lead_times, height, width)
-    
-    unet = UNetCBM(n_features * lead_times, n_concepts, output_dim)
-    unet.eval()
-    
-    with torch.no_grad():
-        output, concepts = unet(x)
-    
-    print("=" * 60)
-    print("UNET CBM VERIFICATION")
-    print("=" * 60)
-    print(f"Input: (B={batch_size}, V={n_features}, T={lead_times}, Y={height}, X={width})")
-    print(f"Output: {output.shape} - should be (B, output_dim={output_dim}, T?, Y={height}, X={width})")
-    print(f"Concepts: {concepts.shape} - should be (B, n_concepts={n_concepts}, output_dim={output_dim}, Y={height}, X={width})")
-    
-    # Verify dimensions
-    assert output.shape[0] == batch_size, "Batch size mismatch"
-    assert output.shape[1] == output_dim, "Output dim mismatch"
-    assert concepts.shape[0] == batch_size, "Batch size mismatch"
-    assert concepts.shape[1] == n_concepts, "n_concepts mismatch"
-    print("\n✓ All assertions passed!")
-
-
-if __name__ == "__main__":
-    print("Testing PointwiseCBM vs UNetCBM\n")
-    test_models_match()
-    print("\n\n")
-    test_with_same_weights()

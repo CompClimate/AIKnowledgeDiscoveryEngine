@@ -23,39 +23,6 @@ print('1', flush=True)
 import os
 print('imported everything', flush=True)
 
-def plot_data_histograms(X_vals, c_vals, output_dir='figs'):
-    """Plot histograms of all features, concepts, and climate modes after normalization."""
-    #os.makedirs(output_dir, exist_ok=True)
-    features      = try_cast(config['DATASET']['features'])
-    concepts      = try_cast(config['DATASET']['concepts'])
-    climate_modes = try_cast(config['DATASET.LAG']['climate_modes'])
-    colors = {'feature': 'tab:blue', 'climate_mode': 'tab:orange', 'concept': 'tab:green'}
-
-    all_vars = (
-        [(v, 'feature', X_vals[i])      for i, v in enumerate(features)] +
-        [(v, 'climate_mode' if v in climate_modes else 'concept', c_vals[i])
-         for i, v in enumerate(concepts)]
-    )
-
-    for var, kind, arr_raw in all_vars:
-        arr = arr_raw.flatten()
-        arr = arr[~np.isnan(arr)]
-
-        fig, ax = plt.subplots(figsize=(6, 4), layout='constrained')
-        ax.hist(arr, bins=100, color=colors[kind], alpha=0.8, edgecolor='none')
-        ax.set_title(f'{var}  [{kind.replace("_", " ")}]')
-        ax.set_xlabel('Normalized value')
-        ax.set_ylabel('Count')
-        ax.annotate(f'n={len(arr):,}\nmin={arr.min():.3g}\nmax={arr.max():.3g}\nμ={arr.mean():.3g}\nσ={arr.std():.3g}',
-                    xy=(0.98, 0.97), xycoords='axes fraction', fontsize=8,
-                    ha='right', va='top',
-                    bbox=dict(boxstyle='round', fc='white', alpha=0.7))
-
-        save_name = f'figs/hist_{var}.png'
-        fig.savefig(save_name, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        print(f'  Saved {save_name}')
-
 def get_dataset():
     print('in get dataset', flush=True)
     start_time = time.time()
@@ -121,7 +88,7 @@ def get_dataset():
     if os.path.exists(norm_cache):
         cache = np.load(norm_cache, allow_pickle=True)
         if cache['features_key'].item() == features_key and cache['concepts_key'].item() == concepts_key:
-            print('Loading norm stats from cache', flush=True)
+            print('loading norm stats from cache', flush=True)
             input_norm.mean   = torch.from_numpy(cache['input_mean']).float()
             input_norm.std    = torch.from_numpy(cache['input_std']).float()
             concept_norm.mean = torch.from_numpy(cache['concept_mean']).float()
@@ -129,7 +96,7 @@ def get_dataset():
             output_norm.mean  = torch.from_numpy(cache['output_mean']).float()
             output_norm.std   = torch.from_numpy(cache['output_std']).float()
         else:
-            print('Cache mismatch, refitting norms', flush=True)
+            print('norm cache mismatch, refitting norms', flush=True)
             input_norm.fit(X_vals[:, :, :train_time_end])
             concept_norm.fit(c_vals[:, :, :train_time_end])
             output_norm.fit(l_vals[:, :, :train_time_end])
@@ -139,7 +106,7 @@ def get_dataset():
                      output_mean=output_norm.mean.numpy(), output_std=output_norm.std.numpy(),
                      features_key=features_key, concepts_key=concepts_key)
     else:
-        print('No norm cache, fitting and saving', flush=True)
+        print('no norm cache, fitting and saving', flush=True)
         input_norm.fit(X_vals[:, :, :train_time_end])
         print('fit input')
         concept_norm.fit(c_vals[:, :, :train_time_end])
@@ -152,8 +119,6 @@ def get_dataset():
                  output_mean=output_norm.mean.numpy(), output_std=output_norm.std.numpy(),
                  features_key=features_key, concepts_key=concepts_key)
         print('norm stats saved', flush=True)
-
-    #plot_data_histograms(X_vals, c_vals)
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)

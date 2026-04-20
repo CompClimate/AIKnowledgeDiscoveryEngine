@@ -81,8 +81,8 @@ class EmulatorDataset(Dataset):
         print('preprocessing done')
 
     def preprocessing(self):
-        log_features = {}
-        log_concepts = {}  # log10, no clipping
+        log_features = {} #trended: {'somxl010'}
+        log_concepts = {} #trended: {'vos2', 'vori', 'von2'}  # log10, no clipping
         symlog_concepts = {'vohfe'}               # symlog, no clipping
         smooth_features = try_cast(config['DATASET']['smooth_features'])
         smooth_concepts = try_cast(config['DATASET']['smooth_concepts'])
@@ -110,14 +110,14 @@ class EmulatorDataset(Dataset):
             if concept not in self.np_concepts:
                 continue
             arr = self.np_concepts[concept]
-            # Transform (applied regardless of clipping)
+            # log transform (applied regardless of clipping)
             if concept in log_concepts:
                 arr = np.log10(np.where(arr > 0, arr, np.nan))
                 print(f'  {concept}: log10')
             elif concept in symlog_concepts:
                 arr = np.sign(arr) * np.log10(1 + np.abs(arr))
                 print(f'  {concept}: symlog')
-            # Clip only if requested
+            # clip concepts
             if concept in self.concepts_to_clip:
                 p2 = np.nanpercentile(arr, 2)
                 p98 = np.nanpercentile(arr, 98)
@@ -137,24 +137,14 @@ class EmulatorDataset(Dataset):
             self.np_labels[label] = arr
             print(f'  {label}: smoothed sigma={sigma}')
 
+    # apply gaussian smoothing over spatial dims 
     def _smooth(self, arr, sigma):
-        """Apply gaussian smoothing over spatial dims (y, x) only."""
         nan_mask = np.isnan(arr)
         filled  = np.where(nan_mask, 0.0, arr)
         weights = np.where(nan_mask, 0.0, 1.0)
         smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
         smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
         return np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
-
-    def _smooth_binary(self, arr, sigma):
-        """Smooth binary labels over spatial dims only then re-threshold at 0.5."""
-        nan_mask = np.isnan(arr)
-        filled  = np.where(nan_mask, 0.0, arr).astype(float)
-        weights = np.where(nan_mask, 0.0, 1.0)
-        smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
-        smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
-        smoothed = np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
-        return np.where(nan_mask, np.nan, (smoothed >= 0.5).astype(float))
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)
