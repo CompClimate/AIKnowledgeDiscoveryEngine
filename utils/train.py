@@ -96,7 +96,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
     val_per_concept_losses = {name: [] for name in concept_names}
     for epoch in range(start_epoch, n_epochs):
         epoch_start = time.time()
-        concept_lambda = lambda_max * (lambda_min / lambda_max) ** (epoch / max(n_epochs - 1, 1))  # adaptive
+        #concept_lambda = lambda_max * (lambda_min / lambda_max) ** (epoch / max(n_epochs - 1, 1))  # adaptive
         print(DEVICE)
         model.train(True)
         train_loss_accum = 0
@@ -110,12 +110,11 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
             batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
-            pred, concept_pred, _, pred_sup, pred_free = model(batch)
+            pred, concept_pred, _ = model(batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
 
-            # pred_loss uses pred_sup only so free path cannot steal gradient from supervised path
-            pred_loss = out_loss_fn(pred_sup * mask, y)
+            pred_loss = out_loss_fn(pred * mask, y)
             per_cl = []
             ci_range = [concept_idx] if concept_idx is not None else range(n_concepts)
             # ocean_mask is (Y, X); expand to (B, output_dim, Y, X) to match concept_y[:, ci]
@@ -125,22 +124,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
                 per_cl.append(cl)
             concept_loss = torch.stack(per_cl).mean()
 
-            # Free concept residual loss: free path trains only on what supervised path doesn't explain
-            if pred_free is not None:
-                residual = (y - pred_sup.detach()) * mask
-                free_loss = out_loss_fn(pred_free * mask, residual)
-                # Orthogonality penalty: penalize correlation between free output and supervised output
-                if ortho_lambda > 0:
-                    pf = (pred_free * mask).flatten()
-                    ps = (pred_sup.detach() * mask).flatten()
-                    pf_c = pf - pf.mean()
-                    ps_c = ps - ps.mean()
-                    ortho_loss = (pf_c * ps_c).sum() / (pf_c.norm() * ps_c.norm() + 1e-8)
-                    free_loss = free_loss + ortho_lambda * ortho_loss.abs()
-            else:
-                free_loss = torch.tensor(0.0, device=DEVICE)
-
-            loss = (1-concept_lambda) * pred_loss + concept_lambda * concept_loss + free_loss
+            loss = (1-concept_lambda) * pred_loss + concept_lambda * concept_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -172,21 +156,21 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
                 val_y = torch.nan_to_num(output_norm.normalize(val_y), nan=0.0)
                 val_batch, val_concept_y, val_y = val_batch.to(DEVICE), val_concept_y.to(DEVICE), val_y.to(DEVICE)
 
-                pred, concept_pred, _, val_pred_sup, val_pred_free = model(val_batch)
+                pred, concept_pred, free = model(val_batch)
                 pred = pred*mask
                 concept_pred = concept_pred*mask
 
                 n_snaps += 1
-                val_pred_loss = out_loss_fn(val_pred_sup * mask, val_y).item()
+                val_pred_loss = out_loss_fn(pred * mask, val_y).item()
                 val_per_cl = []
                 vcm = ocean_mask.unsqueeze(0).unsqueeze(0).expand_as(val_concept_y[:, 0])
                 for ci in ci_range:
                     cl = concept_loss_fn(concept_pred[:, ci][vcm], val_concept_y[:, ci][vcm]) if vcm.any() else concept_pred.new_tensor(0.0)
                     val_per_cl.append(cl)
                 val_concept_loss = torch.stack(val_per_cl).mean().item()
-                if val_pred_free is not None:
-                    val_residual = (val_y - val_pred_sup) * mask
-                    val_free_loss = out_loss_fn(val_pred_free * mask, val_residual).item()
+                if free is not None:
+                    val_residual = (val_y - pred) * mask
+                    val_free_loss = out_loss_fn(free * mask, val_residual).item()
                 else:
                     val_free_loss = 0.0
                 val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss + val_free_loss
