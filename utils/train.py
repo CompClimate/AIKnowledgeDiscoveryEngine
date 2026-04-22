@@ -168,12 +168,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
                     cl = concept_loss_fn(concept_pred[:, ci][vcm], val_concept_y[:, ci][vcm]) if vcm.any() else concept_pred.new_tensor(0.0)
                     val_per_cl.append(cl)
                 val_concept_loss = torch.stack(val_per_cl).mean().item()
-                if free is not None:
-                    val_residual = (val_y - pred) * mask
-                    val_free_loss = out_loss_fn(free * mask, val_residual).item()
-                else:
-                    val_free_loss = 0.0
-                val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss + val_free_loss
+                val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss
                 val_pred_accum += val_pred_loss
                 val_concept_accum += val_concept_loss
                 for idx, ci in enumerate(ci_range):
