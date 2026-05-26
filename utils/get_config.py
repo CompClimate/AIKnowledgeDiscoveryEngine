@@ -47,6 +47,8 @@ def get_model():
         kwargs['channels_list'] = try_cast(config['MODEL.HYPERPARAMETERS']['channels_list'])
     if 'spatial_patch_size' in params:
         kwargs['spatial_patch_size'] = config.getint('MODEL.HYPERPARAMETERS', 'spatial_patch_size')
+    if 'stride_patch_size' in params:
+        kwargs['stride_patch_size'] = config.getint('MODEL.HYPERPARAMETERS', 'stride_patch_size')
     if 'temporal_patch_size' in params:
         kwargs['temporal_patch_size'] = config.getint('MODEL.HYPERPARAMETERS', 'temporal_patch_size')
     if 'd_model' in params:

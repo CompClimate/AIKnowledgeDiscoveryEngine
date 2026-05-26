@@ -1,6 +1,5 @@
 import torch
 from torch import nn as nn
-from torch import optim as optim
 import torch.utils.data as data
 import torch.nn.functional as F
 import math
@@ -9,7 +8,7 @@ from utils.get_config import config, try_cast
 from utils.model_helpers import Pad
 
 class Transformer(nn.Module):
-    def __init__(self, n_features, n_concepts, output_dim, spatial_patch_size, temporal_patch_size, d_model, num_heads, num_layers, d_ff, dropout):
+    def __init__(self, n_features, n_concepts, output_dim, spatial_patch_size, stride_patch_size, temporal_patch_size, d_model, num_heads, num_layers, d_ff, dropout):
         super(Transformer, self).__init__()
         self.n_features = n_features
         self.n_concepts = n_concepts
@@ -17,21 +16,52 @@ class Transformer(nn.Module):
         self.spatial_patch_size = spatial_patch_size
         self.d_model = d_model
         #patch embedding
-        self.patch_embedding = ConvPatchEmbedding(d_model, spatial_patch_size, temporal_patch_size, dropout, n_features)
+        self.patch_embedding = ConvPatchEmbedding(d_model, spatial_patch_size, stride_patch_size, temporal_patch_size, dropout, n_features)
         self.spatial_encoding = SpatialEncodingSinusoidal2D(d_model)
         self.temporal_encoding = TemporalEncodingSinusoidal(d_model)
 
         self.encoder_layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
         self.decoder_layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
 
-        self.upsample = nn.Sequential(nn.ConvTranspose2d(
-            in_channels=d_model,
-            out_channels=d_model,
-            kernel_size=spatial_patch_size,
-            stride=spatial_patch_size
-        ),
-        nn.BatchNorm2d(d_model),
-        nn.GELU())
+        # #smooth again here after upsample?
+        # self.upsample = nn.Sequential(nn.ConvTranspose2d(
+        #     in_channels=d_model,
+        #     out_channels=d_model,
+        #     kernel_size=spatial_patch_size,
+        #     stride=stride_patch_size
+        # ),
+        # nn.BatchNorm2d(d_model),
+        # nn.GELU(),
+        # #nn.Conv2d(d_model, d_model, kernel_size=3, padding=1)
+        # )  #smoothing line
+
+        self.upsample = nn.Sequential(
+            nn.Upsample(scale_factor=stride_patch_size, mode='bilinear', align_corners=False),
+            nn.Conv2d(d_model, d_model, 3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(d_model, d_model, 3, padding=1),
+        )
+
+        # self.upsample = nn.Sequential(  #TODO: make work for any stride_patch_size
+        #     # upsample in stages rather than all at once
+        #     nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+        #     nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
+        #     nn.GELU(),
+        #     nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+        #     nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
+        #     nn.GELU(),
+        #     nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+        #     nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
+        #     nn.GELU(),
+        #     nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+        #     nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
+        #     nn.GELU(),
+        #     nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+        #     nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
+        #     nn.GELU(),
+        # )
+
+        self.skip_proj = nn.Conv2d(n_features, self.d_model, kernel_size=1)
 
         self.concept_net = nn.Conv2d(d_model, n_concepts, kernel_size=1)    #decoder queries handle the output_dim explicilty
 
@@ -57,18 +87,16 @@ class Transformer(nn.Module):
         t_pred_targets = try_cast(config['DATASET']['offset'])
 
         B, V, T, Y, X = x.shape
-
+        
         padder = Pad(Y, X, self.spatial_patch_size)
 
         x, Y, X = padder.pad(x)
 
         x = x.permute(0, 2, 1, 3, 4)   # (B, T, V, Y, X)
-        enc_output = self.patch_embedding(x)
+        enc_output, nr, nc, skip = self.patch_embedding(x)
+        # enc_output, nr, nc = self.patch_embedding(x)
         for enc_layer in self.encoder_layers:
             enc_output = enc_layer(enc_output) #, context_window_mask)
-
-        nr = Y // config.getint('MODEL.HYPERPARAMETERS', 'spatial_patch_size')
-        nc = X // config.getint('MODEL.HYPERPARAMETERS', 'spatial_patch_size')
 
     # temporal encoding for target timesteps
         t_targets   = torch.tensor(t_pred_targets, device=x.device).unsqueeze(0)   # (1, n_targets)
@@ -89,24 +117,20 @@ class Transformer(nn.Module):
         dec_queries = dec_queries.reshape(B * self.output_dim, self.d_model, nr, nc)          # (B*n_targets, d_model, nr, nc)
     
         # upsample to full resolution
-        print(f"dec_queries min={dec_queries.min():.4f} max={dec_queries.max():.4f}")
         dec_queries = self.upsample(dec_queries) #F.interpolate(dec_queries, size=(Y, X), mode='bilinear', align_corners=True) #mode='nearest') #
-                                                                                    # (B*n_targets, d_model, Y, X)
-        print(f"after upsample min={dec_queries.min():.4f} max={dec_queries.max():.4f}")
-        concepts    = self.concept_net(dec_queries)                                          # (B*n_targets, n_concepts*output_dim, Y, X)
-        print(f"concepts min={concepts.min():.4f} max={concepts.max():.4f}")
-        output      = self.output_net(concepts)                                     # (B*n_targets, output_dim, Y, X)
-        print(f"output min={output.min():.4f} max={output.max():.4f}")
+        
+        skip = self.skip_proj(skip)                    # (B*lead, d_model, Y, X)
+        skip = skip.unsqueeze(1).reshape(B, self.d_model, Y, X)
+        dec_queries = dec_queries + skip               # add skip connection
 
-        #print(concepts.shape)
+        concepts    = self.concept_net(dec_queries)                                          # (B*n_targets, n_concepts*output_dim, Y, X)
+        output      = self.output_net(concepts)                                     # (B*n_targets, output_dim, Y, X)
+
         concepts = concepts.reshape(B, self.output_dim, self.n_concepts, Y, X)
-        #print(output.shape)
         output = output.reshape(B, self.output_dim, 1, Y, X)
 
         concepts = concepts.permute(0, 2, 1, 3, 4)  # (B, n_concepts, lead, Y, X)
         output = output.permute(0, 2, 1, 3, 4)      # (B, output_dim, lead, Y, X)
-        #print(concepts.shape)
-        print(output.shape)
 
         output, concepts = padder.crop(output, concepts)
 
@@ -162,9 +186,10 @@ class PositionWiseFeedForward(nn.Module):
 
 #done with convolutions which is computationally better but less interpretable?   
 class ConvPatchEmbedding(nn.Module):
-  def __init__(self, d_model, spatial_patch_size, temporal_patch_size, dropout, n_features):
+  def __init__(self, d_model, spatial_patch_size, stride_patch_size, temporal_patch_size, dropout, n_features):
       super().__init__()
       self.spatial_patch_size = spatial_patch_size
+      self.stride_patch_size = stride_patch_size
       self.temporal_patch_size = temporal_patch_size
       self.n_features = n_features
       self.patcher = nn.Sequential(
@@ -174,7 +199,7 @@ class ConvPatchEmbedding(nn.Module):
               out_channels=d_model,
               # if kernel_size = stride -> no overlap
               kernel_size=(temporal_patch_size, spatial_patch_size, spatial_patch_size),
-              stride=(temporal_patch_size, spatial_patch_size, spatial_patch_size)
+              stride=(temporal_patch_size, stride_patch_size, stride_patch_size)
           ))
           # Linear projection of Flattened Patches. We keep the batch and the channels (b,c,h,w)
           #nn.Flatten(2))
@@ -184,8 +209,9 @@ class ConvPatchEmbedding(nn.Module):
 
   def forward(self, x):
       B, T, V, Y, X = x.shape
-      # Create the patches
       x = x.permute(0, 2, 1, 3, 4)                        # (B, V, T, Y, X) -> Conv3d sees (B, C, D, H, W)
+      skip = x.reshape(B, V * T, Y, X) 
+      
       x = self.patcher(x)
       B, E, Tp, nr, nc = x.shape
       x = x.permute(0, 2, 3, 4, 1)
@@ -200,7 +226,8 @@ class ConvPatchEmbedding(nn.Module):
       cls = cls.expand(B, -1, -1)
       x = torch.cat([cls, x], dim=1)                # (B, 1+T*N, embed_dim)
       x = self.dropout(x)
-      return x
+      return x, nr, nc, skip
+    # return x, nr, nc
 
 class SpatialEncodingSinusoidal2D(nn.Module):
     def __init__(self, d_model, max_h=64, max_w=64):
