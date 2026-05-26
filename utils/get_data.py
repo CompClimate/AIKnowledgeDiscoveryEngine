@@ -52,17 +52,24 @@ def get_dataset():
     test_set = Subset(dataset, test_idx)
     print('subsetting done', flush=True)
 
+<<<<<<< HEAD
     norm_type = config.get('TRAINING', 'norm_type', fallback='MinMax')
     NormClass = ZScoreNormalize if norm_type == 'ZScore' else MinMaxNormalize
     input_norm = NormClass()
     concept_norm = NormClass()
     output_norm = NormClass()
+=======
+    #TODO move norm type to config
+    # out_loss_fn = config['TRAINING']['out_loss_fn']
+    # out_loss_fn = getattr(torch.nn, out_loss_fn)()
+    input_norm = ZScoreNormalize()
+    concept_norm = ZScoreNormalize()
+    output_norm = ZScoreNormalize() 
+>>>>>>> origin/transformer
 
     X_vars = []
     for feat in features:
-        print(feat)
         var_slice = dataset.np_data[feat]
-        print(var_slice.shape)
         X_vars.append(var_slice)
     X_vals = np.stack(X_vars)
 
@@ -82,6 +89,7 @@ def get_dataset():
         l_vars.append(label_slice)
     l_vals = np.stack(l_vars)
 
+<<<<<<< HEAD
     norm_cache = '/quobyte/maikesgrp/sanah/norm_stats.npz'
     features_key = '_'.join(sorted(features)) + f'_w{config.getint("DATASET", "context_window")}'
     concepts_key = '_'.join(sorted(concepts)) + f'_w{config.getint("DATASET", "context_window")}'
@@ -119,6 +127,14 @@ def get_dataset():
                  output_mean=output_norm.mean.numpy(), output_std=output_norm.std.numpy(),
                  features_key=features_key, concepts_key=concepts_key)
         print('norm stats saved', flush=True)
+=======
+    train_time = list(range(0, train_time_end))
+    input_norm.fit(X_vals[:, :, train_time])
+    concept_norm.fit(c_vals[:, :, train_time])
+    output_norm.fit(l_vals[:, :, train_time])
+
+    print('input norm mean ', input_norm.mean, input_norm.std)
+>>>>>>> origin/transformer
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)

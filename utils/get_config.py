@@ -35,16 +35,35 @@ def get_model():
     params = set(sig.parameters.keys()) - {'self'}
 
     kwargs = {
-        'n_features': len(try_cast(config['DATASET']['features'])) * config.getint('DATASET', 'context_window'),
+        'n_features': len(try_cast(config['DATASET']['features']))* config.getint('DATASET', 'context_window'), 
         'n_concepts': len(try_cast(config['DATASET']['concepts'])),
         'output_dim': len(try_cast(config['DATASET']['offset'])),
+        'dropout': config.getfloat('MODEL.HYPERPARAMETERS', 'dropout')
     }
+    if 'num_layers' in params:
+        kwargs['num_layers'] = config.getint('MODEL.HYPERPARAMETERS', 'depth')
     if 'hidden_dim' in params:
         kwargs['hidden_dim'] = config.getint('MODEL.HYPERPARAMETERS', 'width')
     if 'channels_list' in params and config.has_option('MODEL.HYPERPARAMETERS', 'channels_list'):
         kwargs['channels_list'] = try_cast(config['MODEL.HYPERPARAMETERS']['channels_list'])
+<<<<<<< HEAD
     if 'n_free_concepts' in params:
         kwargs['n_free_concepts'] = config.getint('MODEL.HYPERPARAMETERS', 'n_free_concepts', fallback=0)
+=======
+    if 'spatial_patch_size' in params:
+        kwargs['spatial_patch_size'] = config.getint('MODEL.HYPERPARAMETERS', 'spatial_patch_size')
+    if 'stride_patch_size' in params:
+        kwargs['stride_patch_size'] = config.getint('MODEL.HYPERPARAMETERS', 'stride_patch_size')
+    if 'temporal_patch_size' in params:
+        kwargs['temporal_patch_size'] = config.getint('MODEL.HYPERPARAMETERS', 'temporal_patch_size')
+    if 'd_model' in params:
+        kwargs['d_model'] = config.getint('MODEL.HYPERPARAMETERS', 'd_model')
+    if 'num_heads' in params:
+        kwargs['num_heads'] = config.getint('MODEL.HYPERPARAMETERS', 'num_heads')
+    if 'd_ff' in params:
+        kwargs['d_ff'] = config.getint('MODEL.HYPERPARAMETERS', 'd_ff')
+    
+>>>>>>> origin/transformer
 
     model = ModelClass(**kwargs)
     return model

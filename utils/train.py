@@ -105,15 +105,23 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
         train_per_concept_accum = [0.0] * n_concepts
         n_snaps = 0
         for batch, concept_y, y in train_loader:
+            print("before norm:", batch.min(), batch.max())
             batch = torch.nan_to_num(input_norm.normalize(batch), nan=0.0)
+            print("after norm:", batch.min(), batch.max())
             concept_y = torch.nan_to_num(concept_norm.normalize(concept_y), nan=0.0)
+<<<<<<< HEAD
             y = torch.nan_to_num(output_norm.normalize(y), nan=0.0)
+=======
+            y = torch.nan_to_num(output_norm.normalize(y), nan=0.0) #use again if using real world values not anomaly
+            #y = torch.nan_to_num(y, nan=0.0)
+>>>>>>> origin/transformer
             batch, concept_y, y = batch.to(DEVICE), concept_y.to(DEVICE), y.to(DEVICE)
 
             pred, concept_pred, _ = model(batch)
             pred = pred*mask
             concept_pred = concept_pred*mask
 
+<<<<<<< HEAD
             pred_loss = out_loss_fn(pred * mask, y)
             per_cl = []
             ci_range = [concept_idx] if concept_idx is not None else range(n_concepts)
@@ -126,8 +134,21 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
 
             loss = (1-concept_lambda) * pred_loss + concept_lambda * concept_loss
 
+=======
+            pred_loss = out_loss_fn(pred, y)
+            concept_loss = concept_loss_fn(concept_pred, concept_y)
+            loss = (1-concept_lambda) * pred_loss + (concept_lambda * concept_loss)
+
+            print('here')
+            print(f"pred_loss: {pred_loss:.4f}")
+            print(f"concept_loss: {concept_loss:.4f}")
+            print(f"concept_pred: min={concept_pred.min():.4f} max={concept_pred.max():.4f} mean={concept_pred.mean():.4f}")
+            print(f"concept_y: min={concept_y.min():.4f} max={concept_y.max():.4f} mean={concept_y.mean():.4f}")
+            
+>>>>>>> origin/transformer
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             n_snaps += 1
@@ -154,6 +175,10 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
                 val_batch = torch.nan_to_num(input_norm.normalize(val_batch), nan=0.0)
                 val_concept_y = torch.nan_to_num(concept_norm.normalize(val_concept_y), nan=0.0)
                 val_y = torch.nan_to_num(output_norm.normalize(val_y), nan=0.0)
+<<<<<<< HEAD
+=======
+                #val_y = torch.nan_to_num(val_y, nan=0.0)
+>>>>>>> origin/transformer
                 val_batch, val_concept_y, val_y = val_batch.to(DEVICE), val_concept_y.to(DEVICE), val_y.to(DEVICE)
 
                 pred, concept_pred, free = model(val_batch)

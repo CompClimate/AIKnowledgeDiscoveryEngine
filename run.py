@@ -8,6 +8,12 @@ from inference import save_val_preds, plot_pearsonr
 import os
 
 def run():
+<<<<<<< HEAD
+=======
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(DEVICE)
+    start = time.time()
+>>>>>>> origin/transformer
     input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
     for i in range(6): 
         print('ensemble member: ', i+1)

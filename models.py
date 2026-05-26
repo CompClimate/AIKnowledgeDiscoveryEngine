@@ -7,16 +7,18 @@ import torch.nn as nn
 class PointwiseCBM(nn.Module):
     def __init__(self, n_features, n_concepts, hidden_dim, output_dim):
         super().__init__()
-        self.n_features = n_features
-        self.n_concepts = n_concepts
-        self.hidden_dim = hidden_dim
-        self.output_dim = output_dim
         
         self.concept_net = nn.Sequential(
             nn.Linear(n_features, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
             nn.Linear(hidden_dim, n_concepts*output_dim),
-            #nn.Sigmoid()  # concepts typically in [0,1]
         )
         
         self.output_net = nn.Sequential(
@@ -55,7 +57,7 @@ class PointwiseNoCBM(nn.Module):
             nn.Linear(n_features, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, output_dim),
-            #nn.Sigmoid()  # concepts typically in [0,1]
+            nn.Sigmoid()  # concepts typically in [0,1]
         )
 
     def forward(self, x):
