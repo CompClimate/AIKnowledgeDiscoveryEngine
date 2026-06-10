@@ -10,20 +10,12 @@ import os
 import argparse
 import multiprocessing as mp
 from itertools import product
-<<<<<<< HEAD
-import gsw
-from scipy.ndimage import gaussian_filter
-import xgcm
-import calendar
-import pandas as pd
-=======
 # import gsw
 # from scipy.ndimage import gaussian_filter
 # import xgcm
 # import calendar
 # import pandas as pd
 # import seaborn as sns
->>>>>>> origin/transformer
 import sys
 
 def crop_concept_to_zarr(
@@ -203,17 +195,7 @@ if __name__ == "__main__":
 
     # if concept in ['sowsc', 'voep']:
     #     cell = 'F'
-
-<<<<<<< HEAD
     # grids = {'sometauy': 'V', 'sozotaux': 'U', 'sosaline': 'T', 'sosstsst': 'T', 'sohefldo': 'T', 
     #         'somxl010': 'T'}
     #crop_input_to_zarr(member, 'sossheig', 'T', years=range(1979, 2019))
     crop_concept_to_zarr(member, 'votempdiff', 'T', years=range(1979, 2019))
-=======
-    grids = {'sometauy': 'V', 'sozotaux': 'U', 'sosaline': 'T', 'sosstsst': 'T', 'sohefldo': 'T', 
-            'somxl010': 'T'}
-    
-    crop_input_to_zarr(member, concept, grids[concept], years=range(1979, 2019))
-    modes = ['amo', 'nao', 'oni', 'pdo', 'sam']
-    crop_mode_to_zarr(modes)
->>>>>>> origin/transformer

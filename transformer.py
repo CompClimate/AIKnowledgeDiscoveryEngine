@@ -184,6 +184,22 @@ class PositionWiseFeedForward(nn.Module):
     def forward(self, x):
         return self.pwff(x)
 
+class ExplicitPatchEmbedding(nn.Module):
+    def __init__(self, d_model, spatial_patch_size, temporal_patch_size, dropout, n_features):
+      super().__init__()
+      self.spatial_patch_size = spatial_patch_size
+      self.stride_patch_size = stride_patch_size
+      self.temporal_patch_size = temporal_patch_size
+      self.n_features = n_features
+      self.patcher = nn.Sequential(
+          # We use conv for doing the patching
+          )
+          # Linear projection of Flattened Patches. We keep the batch and the channels (b,c,h,w)
+          #nn.Flatten(2))
+      self.spatial_encoding = SpatialEncodingSinusoidal2D(d_model)
+      self.temporal_encoding = TemporalEncodingSinusoidal(d_model)
+      self.dropout = nn.Dropout(p=dropout)
+
 #done with convolutions which is computationally better but less interpretable?   
 class ConvPatchEmbedding(nn.Module):
   def __init__(self, d_model, spatial_patch_size, stride_patch_size, temporal_patch_size, dropout, n_features):
@@ -199,10 +215,8 @@ class ConvPatchEmbedding(nn.Module):
               out_channels=d_model,
               # if kernel_size = stride -> no overlap
               kernel_size=(temporal_patch_size, spatial_patch_size, spatial_patch_size),
-              stride=(temporal_patch_size, stride_patch_size, stride_patch_size)
+              stride=(temporal_patch_size, spatial_patch_size, spatial_patch_size)
           ))
-          # Linear projection of Flattened Patches. We keep the batch and the channels (b,c,h,w)
-          #nn.Flatten(2))
       self.spatial_encoding = SpatialEncodingSinusoidal2D(d_model)
       self.temporal_encoding = TemporalEncodingSinusoidal(d_model)
       self.dropout = nn.Dropout(p=dropout)
@@ -219,7 +233,6 @@ class ConvPatchEmbedding(nn.Module):
       # Patch + Position Embedding
       sp_enc          = self.spatial_encoding(nr, nc)   # (1, N, d_model)
       x               = x + sp_enc.unsqueeze(1)
-
       te_enc, cls     = self.temporal_encoding(torch.arange(Tp, device=x.device).unsqueeze(0))               # (B, T, D), (B, 1, D)
       x               = x + te_enc.unsqueeze(2)
       x = x.reshape(B, Tp * nr * nc, E)                      # (B, T*N, embed_dim)
@@ -227,7 +240,6 @@ class ConvPatchEmbedding(nn.Module):
       x = torch.cat([cls, x], dim=1)                # (B, 1+T*N, embed_dim)
       x = self.dropout(x)
       return x, nr, nc, skip
-    # return x, nr, nc
 
 class SpatialEncodingSinusoidal2D(nn.Module):
     def __init__(self, d_model, max_h=64, max_w=64):

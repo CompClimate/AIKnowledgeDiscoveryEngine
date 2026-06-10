@@ -32,14 +32,12 @@ class EmulatorDataset(Dataset):
         for feat in self.features:
             data = []
             for opa in self.opas:
-                print('in opa!')
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{feat}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
                 dp = dp.sortby('time_counter')
                 dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
-            print('out of opa')
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_data[feat] = ds.to_array().values.squeeze(0)
@@ -49,14 +47,12 @@ class EmulatorDataset(Dataset):
         for concept in self.concepts:
             data = []
             for opa in self.opas:
-                print('in opa')
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{concept}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
                 dp = dp.sortby('time_counter')
                 dp = dp.sel(time_counter=slice(self.start, self.end))
                 data.append(dp)
-            print('out of opa')
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_concepts[concept] = ds.to_array().values.squeeze(0)
@@ -66,7 +62,6 @@ class EmulatorDataset(Dataset):
         for label in self.labels:
             data = []
             for opa in self.opas:
-                print('in opa')
                 dp = xr.open_zarr(f"{self.loc}/{opa}/{label}_na.zarr")
                 dp = dp.expand_dims(opa=[opa])
                 dp = dp.sel(y=slice(0, 302), x=slice(0,400))
@@ -75,8 +70,6 @@ class EmulatorDataset(Dataset):
             ds = xr.concat(data, dim="opa")
             ds = ds.assign_coords(time=np.arange(ds.sizes["time_counter"]))
             self.np_labels[label] = ds.to_array().values.squeeze(0)
-<<<<<<< HEAD
-            print('out of opa')
         print('labels done')
         self.preprocessing()
         print('preprocessing done')
@@ -84,13 +77,6 @@ class EmulatorDataset(Dataset):
     def preprocessing(self):
         log_features = {} #trended: {'somxl010'}
         log_concepts = {} #trended: {'vos2', 'vori', 'von2'}  # log10, no clipping
-=======
-        self.preprocessing()
-
-    def preprocessing(self):
-        log_features = {'somxl010'}
-        log_concepts = {'vori', 'von2', 'vos2'}  # log10, no clipping
->>>>>>> origin/transformer
         symlog_concepts = {'vohfe'}               # symlog, no clipping
         smooth_features = try_cast(config['DATASET']['smooth_features'])
         smooth_concepts = try_cast(config['DATASET']['smooth_concepts'])
@@ -118,22 +104,14 @@ class EmulatorDataset(Dataset):
             if concept not in self.np_concepts:
                 continue
             arr = self.np_concepts[concept]
-<<<<<<< HEAD
-            # log transform (applied regardless of clipping)
-=======
             # Transform (applied regardless of clipping)
->>>>>>> origin/transformer
             if concept in log_concepts:
                 arr = np.log10(np.where(arr > 0, arr, np.nan))
                 print(f'  {concept}: log10')
             elif concept in symlog_concepts:
                 arr = np.sign(arr) * np.log10(1 + np.abs(arr))
                 print(f'  {concept}: symlog')
-<<<<<<< HEAD
             # clip concepts
-=======
-            # Clip only if requested
->>>>>>> origin/transformer
             if concept in self.concepts_to_clip:
                 p2 = np.nanpercentile(arr, 2)
                 p98 = np.nanpercentile(arr, 98)
@@ -153,33 +131,14 @@ class EmulatorDataset(Dataset):
             self.np_labels[label] = arr
             print(f'  {label}: smoothed sigma={sigma}')
 
-<<<<<<< HEAD
-    # apply gaussian smoothing over spatial dims 
-    def _smooth(self, arr, sigma):
-=======
     def _smooth(self, arr, sigma):
         """Apply gaussian smoothing over spatial dims (y, x) only."""
->>>>>>> origin/transformer
         nan_mask = np.isnan(arr)
         filled  = np.where(nan_mask, 0.0, arr)
         weights = np.where(nan_mask, 0.0, 1.0)
         smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
         smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
         return np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
-<<<<<<< HEAD
-=======
-
-    def _smooth_binary(self, arr, sigma):
-        """Smooth binary labels over spatial dims only then re-threshold at 0.5."""
-        nan_mask = np.isnan(arr)
-        filled  = np.where(nan_mask, 0.0, arr).astype(float)
-        weights = np.where(nan_mask, 0.0, 1.0)
-        smooth_vals    = gaussian_filter(filled,  sigma=[0, 0, sigma, sigma])
-        smooth_weights = gaussian_filter(weights, sigma=[0, 0, sigma, sigma])
-        smoothed = np.where(nan_mask, np.nan, smooth_vals / (smooth_weights + 1e-8))
-        return np.where(nan_mask, np.nan, (smoothed >= 0.5).astype(float))
-
->>>>>>> origin/transformer
 
     def __len__(self):
         return (len(self.date_range()) - self.window - max(self.offset) + 1) * len(self.opas)

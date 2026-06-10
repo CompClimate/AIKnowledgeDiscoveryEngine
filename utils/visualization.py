@@ -30,20 +30,10 @@ def find_output_dir():
     print(f'Using output directory: {result}', flush=True)
     return result
 
-
-<<<<<<< HEAD
-def visualize(output_dir):
+def visualize(output_dir=None):
     if output_dir == None:
         output_dir = find_output_dir()
     losses_path = f'{output_dir}/detailed_losses.pt'
-=======
-def visualize(model_dir=None, output_dir=None):
-    if model_dir is None:
-        model_dir = find_output_dir()
-    if output_dir is None:
-        output_dir = model_dir
-    losses_path = f'{model_dir}/detailed_losses.pt'
->>>>>>> origin/transformer
 
     data = torch.load(losses_path, weights_only=False)
     train_loss = data['loss']
@@ -100,12 +90,7 @@ def visualize(model_dir=None, output_dir=None):
     plt.close(fig)
     print(f'Saved {output_dir}/losses.png', flush=True)
 
-<<<<<<< HEAD
 def plot_sample(model_dir=None, input_norm=None, concept_norm=None, output_norm=None, val_loader=None, val_sample_idx=None, output_dir=None):
-=======
-
-def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=None, val_sample_idx=None, output_dir=None):
->>>>>>> origin/transformer
     """Plot prediction and concept maps for a validation sample across training epochs."""
     if model_dir is None:
         model_dir = find_output_dir()
@@ -174,15 +159,10 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         with torch.no_grad():
-            output, concept_pred, free_pred, *_ = model(data_gpu)
+            output, concept_pred = model(data_gpu)
             epoch_results[epoch] = {
-<<<<<<< HEAD
                 'pred': output_norm.denormalize(output.cpu()),
-=======
-                'pred': output.cpu(),
->>>>>>> origin/transformer
-                'concept': concept_norm.denormalize(concept_pred.cpu()),
-                'free': free_pred.cpu() if free_pred is not None else None,
+                'concept': concept_norm.denormalize(concept_pred.cpu())
             }
         print(f'Forward pass epoch {epoch} done', flush=True)
 
@@ -196,18 +176,11 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
         gt_masked = np.ma.masked_where(land_mask, gt)
         vmin_gt, vmax_gt = float(np.nanmin(gt)), float(np.nanmax(gt))
         axes[0].set_facecolor('white')
-<<<<<<< HEAD
         im0 = axes[0].imshow(gt_masked, vmin=vmin_gt, vmax=vmax_gt, cmap='RdYlBu_r', aspect='equal', origin='lower')
         axes[0].set_title("Ground Truth")
         axes[0].axis('on')
         label = try_cast(config['DATASET']['labels'])[0]
         fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label(label)
-=======
-        im0 = axes[0].imshow(gt_masked, vmin=0, vmax=1, cmap='RdYlBu_r', aspect='equal', origin='lower')
-        axes[0].set_title("Ground Truth")
-        axes[0].axis('on')
-        fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label('P(MLHC Event)')
->>>>>>> origin/transformer
 
         for i, epoch in enumerate(epochs_to_check):
             if epoch not in epoch_results:
@@ -221,11 +194,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             ax.axis('on')
             im = ax.imshow(masked, vmin=vmin_p, vmax=vmax_p, cmap='RdYlBu_r', aspect='equal', origin='lower')
             ax.set_title(f"Epoch {epoch}")
-<<<<<<< HEAD
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(label)
-=======
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label('P(MLHC Event)')
->>>>>>> origin/transformer
         current_step = steps_mapping[time_step]
         target_month = target_dates[current_step]
         fig.suptitle(f'{model_type} Predictions: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
@@ -244,11 +213,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             gt = concept_true[0, ci, time_step, :, :].cpu().numpy()
             gt_masked = np.ma.masked_where(land_mask, gt)
             clean_arr = np.ma.filled(gt_masked.astype(float), np.nan)
-<<<<<<< HEAD
             vmin, vmax = np.nanmin(clean_arr), np.nanmax(clean_arr)
-=======
-            vmin, vmax = float(np.nanmin(clean_arr)), float(np.nanmax(clean_arr))
->>>>>>> origin/transformer
 
             axes[0].set_facecolor('white')
             im0 = axes[0].imshow(gt_masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin, vmax=vmax, origin='lower')
@@ -262,11 +227,7 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
                 pred_2d = epoch_results[epoch]['concept'][0, ci, time_step, :, :].numpy()
                 masked = np.ma.masked_where(land_mask, pred_2d)
                 clean = np.ma.filled(masked.astype(float), np.nan)
-<<<<<<< HEAD
                 vmin_p, vmax_p = np.nanmin(clean), np.nanmax(clean)
-=======
-                vmin_p, vmax_p = float(np.nanmin(clean)), float(np.nanmax(clean))
->>>>>>> origin/transformer
                 ax = axes[ei + 1]
                 ax.set_facecolor('white')
                 ax.axis('on')
@@ -281,49 +242,39 @@ def plot_sample(model_dir=None, input_norm=None, concept_norm=None, val_loader=N
             plt.close(fig)
             print(f'Saved {save_name}', flush=True)
 
-<<<<<<< HEAD
-    # --- Free concept plots ---
-    n_free = config.getint('MODEL.HYPERPARAMETERS', 'n_free_concepts', fallback=0)
-    for fi in range(n_free):
-        for time_step in range(len(try_cast(config['DATASET']['offset']))):
-            fig, axes = plt.subplots(1, len(epochs_to_check), figsize=(len(epochs_to_check) * 4, 3.5), layout='constrained')
-            if len(epochs_to_check) == 1:
-                axes = [axes]
-            for ax in axes:
-                ax.axis('off')
-            for ei, epoch in enumerate(epochs_to_check):
-                if epoch not in epoch_results or epoch_results[epoch]['free'] is None:
-                    continue
-                pred_2d = epoch_results[epoch]['free'][0, fi, time_step, :, :].numpy()
-                masked = np.ma.masked_where(land_mask, pred_2d)
-                vmin_p, vmax_p = float(np.nanmin(pred_2d)), float(np.nanmax(pred_2d))
-                axes[ei].set_facecolor('white')
-                axes[ei].axis('on')
-                im = axes[ei].imshow(masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin_p, vmax=vmax_p, origin='lower')
-                axes[ei].set_title(f"Epoch {epoch}")
-                fig.colorbar(im, ax=axes[ei], fraction=0.046, pad=0.04).set_label(f'free_{fi}')
-            current_step = steps_mapping[time_step]
-            target_month = target_dates[current_step]
-            fig.suptitle(f'{model_type} Free Concept {fi}: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
-            save_name = f'{output_dir}/{model_type}_free{fi}_lead{current_step}.png'
-            fig.savefig(save_name, dpi=200, bbox_inches='tight')
-            plt.close(fig)
-            print(f'Saved {save_name}', flush=True)
+    # # --- Free concept plots ---
+    # n_free = config.getint('MODEL.HYPERPARAMETERS', 'n_free_concepts', fallback=0)
+    # for fi in range(n_free):
+    #     for time_step in range(len(try_cast(config['DATASET']['offset']))):
+    #         fig, axes = plt.subplots(1, len(epochs_to_check), figsize=(len(epochs_to_check) * 4, 3.5), layout='constrained')
+    #         if len(epochs_to_check) == 1:
+    #             axes = [axes]
+    #         for ax in axes:
+    #             ax.axis('off')
+    #         for ei, epoch in enumerate(epochs_to_check):
+    #             if epoch not in epoch_results or epoch_results[epoch]['free'] is None:
+    #                 continue
+    #             pred_2d = epoch_results[epoch]['free'][0, fi, time_step, :, :].numpy()
+    #             masked = np.ma.masked_where(land_mask, pred_2d)
+    #             vmin_p, vmax_p = float(np.nanmin(pred_2d)), float(np.nanmax(pred_2d))
+    #             axes[ei].set_facecolor('white')
+    #             axes[ei].axis('on')
+    #             im = axes[ei].imshow(masked, cmap='RdYlBu_r', aspect='equal', vmin=vmin_p, vmax=vmax_p, origin='lower')
+    #             axes[ei].set_title(f"Epoch {epoch}")
+    #             fig.colorbar(im, ax=axes[ei], fraction=0.046, pad=0.04).set_label(f'free_{fi}')
+    #         current_step = steps_mapping[time_step]
+    #         target_month = target_dates[current_step]
+    #         fig.suptitle(f'{model_type} Free Concept {fi}: Lead {current_step}mo (target: {target_month}, opa{member})', fontsize=14)
+    #         save_name = f'{output_dir}/{model_type}_free{fi}_lead{current_step}.png'
+    #         fig.savefig(save_name, dpi=200, bbox_inches='tight')
+    #         plt.close(fig)
+    #         print(f'Saved {save_name}', flush=True)
 
 def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
                           val_sample_idx=None, thresholds=[0.5, 0.4, 0.3, 0.25]):
     """Plot binary prediction maps at multiple thresholds vs ground truth."""
     if model_dir is None:
         model_dir = find_output_dir()
-=======
-def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
-                          val_sample_idx=None, output_dir=None):
-    """Plot binary prediction maps at multiple thresholds vs ground truth."""
-    if model_dir is None:
-        model_dir = find_output_dir()
-    if output_dir is None:
-        output_dir = model_dir
->>>>>>> origin/transformer
     if val_sample_idx is None:
         val_sample_idx = config.getint('VISUALIZATION', 'val_sample_idx', fallback=1)
 
@@ -374,11 +325,7 @@ def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
 
     data_gpu = torch.nan_to_num(input_norm.normalize(data), nan=0.0).to(DEVICE)
     with torch.no_grad():
-<<<<<<< HEAD
         output, *_ = model(data_gpu)
-=======
-        output, _ = model(data_gpu)
->>>>>>> origin/transformer
     pred = output.cpu().numpy()  # (1, 1, n_leads, Y, X)
 
     cmap = ListedColormap(['#d0d0d0', '#d62728'])  # gray=no event, red=event
@@ -410,24 +357,12 @@ def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
 
         target_month = target_dates[lead]
         fig.suptitle(f'{model_type} Binary Predictions: Lead {lead}mo (target: {target_month}, opa{member})', fontsize=12)
-<<<<<<< HEAD
         save_name = f'{model_dir}/{model_type}_binary_lead{lead}.png'
-=======
-        save_name = f'{output_dir}/{model_type}_binary_lead{lead}.png'
->>>>>>> origin/transformer
         fig.savefig(save_name, dpi=200, bbox_inches='tight')
         plt.close(fig)
         print(f'Saved {save_name}', flush=True)
-
-<<<<<<< HEAD
 
 if __name__ == "__main__":
     #plot_sample(model_dir='/home/kkringel/temp/20260222_MLParch/maike_c+b_concepts_64_64_64/PointwiseCBM_lam0.5_ep50_lr0.001_bs64_BCELoss')
     output_dir = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.0_ep51_lr0.001_bs64_L1Loss_ZScore_v2'
     visualize(output_dir=output_dir)
-=======
-
-
-if __name__ == "__main__":
-    plot_sample_pred_only(model_dir='/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.2_ep50_lr0.001_bs64_FocalLoss')
->>>>>>> origin/transformer

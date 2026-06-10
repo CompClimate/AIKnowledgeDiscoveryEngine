@@ -1,27 +1,16 @@
 # calls to load_data
 # then deals with splitting data
 # if we want to parallelize in the future that would happen here
-print('in the file', flush=True)
 from utils.load_data import EmulatorDataset
-print('1', flush=True)
 from torch.utils.data import Subset
-print('1', flush=True)
 from torch.utils.data import DataLoader
-print('1', flush=True)
 from utils.get_config import config, try_cast
-print('1', flush=True)
-from utils.compute_stats import ZScoreNormalize, MinMaxNormalize
-print('1', flush=True)
 import torch
-print('1', flush=True)
 import numpy as np
-print('1', flush=True)
 import matplotlib.pyplot as plt
-print('1', flush=True)
 import time
-print('1', flush=True)
 import os
-print('imported everything', flush=True)
+import importlib
 
 def get_dataset():
     print('in get dataset', flush=True)
@@ -52,20 +41,13 @@ def get_dataset():
     test_set = Subset(dataset, test_idx)
     print('subsetting done', flush=True)
 
-<<<<<<< HEAD
     norm_type = config.get('TRAINING', 'norm_type', fallback='MinMax')
-    NormClass = ZScoreNormalize if norm_type == 'ZScore' else MinMaxNormalize
+    norm_module = config['TRAINING']['norm_def']
+    module = importlib.import_module(norm_module)
+    NormClass = getattr(module, norm_type)
     input_norm = NormClass()
     concept_norm = NormClass()
     output_norm = NormClass()
-=======
-    #TODO move norm type to config
-    # out_loss_fn = config['TRAINING']['out_loss_fn']
-    # out_loss_fn = getattr(torch.nn, out_loss_fn)()
-    input_norm = ZScoreNormalize()
-    concept_norm = ZScoreNormalize()
-    output_norm = ZScoreNormalize() 
->>>>>>> origin/transformer
 
     X_vars = []
     for feat in features:
@@ -89,8 +71,8 @@ def get_dataset():
         l_vars.append(label_slice)
     l_vals = np.stack(l_vars)
 
-<<<<<<< HEAD
-    norm_cache = '/quobyte/maikesgrp/sanah/norm_stats.npz'
+    loc = config['DATASET']['location']
+    norm_cache = loc + '/norm_stats.npz'
     features_key = '_'.join(sorted(features)) + f'_w{config.getint("DATASET", "context_window")}'
     concepts_key = '_'.join(sorted(concepts)) + f'_w{config.getint("DATASET", "context_window")}'
     if os.path.exists(norm_cache):
@@ -114,27 +96,15 @@ def get_dataset():
                      output_mean=output_norm.mean.numpy(), output_std=output_norm.std.numpy(),
                      features_key=features_key, concepts_key=concepts_key)
     else:
-        print('no norm cache, fitting and saving', flush=True)
         input_norm.fit(X_vals[:, :, :train_time_end])
-        print('fit input')
         concept_norm.fit(c_vals[:, :, :train_time_end])
-        print('fit concept')
         output_norm.fit(l_vals[:, :, :train_time_end])
-        print('fit label')
         np.savez(norm_cache,
                  input_mean=input_norm.mean.numpy(), input_std=input_norm.std.numpy(),
                  concept_mean=concept_norm.mean.numpy(), concept_std=concept_norm.std.numpy(),
                  output_mean=output_norm.mean.numpy(), output_std=output_norm.std.numpy(),
                  features_key=features_key, concepts_key=concepts_key)
         print('norm stats saved', flush=True)
-=======
-    train_time = list(range(0, train_time_end))
-    input_norm.fit(X_vals[:, :, train_time])
-    concept_norm.fit(c_vals[:, :, train_time])
-    output_norm.fit(l_vals[:, :, train_time])
-
-    print('input norm mean ', input_norm.mean, input_norm.std)
->>>>>>> origin/transformer
 
     batch_size =  config.getint('DATASET', 'batch_size') 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle = True)

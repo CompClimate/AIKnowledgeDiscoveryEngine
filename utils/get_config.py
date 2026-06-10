@@ -46,10 +46,8 @@ def get_model():
         kwargs['hidden_dim'] = config.getint('MODEL.HYPERPARAMETERS', 'width')
     if 'channels_list' in params and config.has_option('MODEL.HYPERPARAMETERS', 'channels_list'):
         kwargs['channels_list'] = try_cast(config['MODEL.HYPERPARAMETERS']['channels_list'])
-<<<<<<< HEAD
     if 'n_free_concepts' in params:
         kwargs['n_free_concepts'] = config.getint('MODEL.HYPERPARAMETERS', 'n_free_concepts', fallback=0)
-=======
     if 'spatial_patch_size' in params:
         kwargs['spatial_patch_size'] = config.getint('MODEL.HYPERPARAMETERS', 'spatial_patch_size')
     if 'stride_patch_size' in params:
@@ -62,8 +60,6 @@ def get_model():
         kwargs['num_heads'] = config.getint('MODEL.HYPERPARAMETERS', 'num_heads')
     if 'd_ff' in params:
         kwargs['d_ff'] = config.getint('MODEL.HYPERPARAMETERS', 'd_ff')
-    
->>>>>>> origin/transformer
 
     model = ModelClass(**kwargs)
     return model
