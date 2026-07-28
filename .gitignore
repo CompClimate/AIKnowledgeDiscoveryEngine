@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+logs/
+
+# Generated figures at repo root (kept in paper_figs/ instead)
+*.png
+*.pdf
+
+# PDFs (papers, reviews)
+oceancbm_preprint.pdf
+oceancbm_reviews.pdf
+
+# Figures and rebuttal artifacts
+paper_figs/
+rebuttal_numbers.txt
+corr.txt
