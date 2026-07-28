@@ -366,6 +366,6 @@ def plot_sample_pred_only(model_dir=None, input_norm=None, val_loader=None,
 
 
 if __name__ == "__main__":
-    #plot_sample(model_dir='/home/kkringel/temp/20260222_MLParch/maike_c+b_concepts_64_64_64/PointwiseCBM_lam0.5_ep50_lr0.001_bs64_BCELoss')
-    output_dir = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.0_ep51_lr0.001_bs64_L1Loss_ZScore_v2'
+    #plot_sample(model_dir='/path/to/home/temp/20260222_MLParch/maike_c+b_concepts_64_64_64/PointwiseCBM_lam0.5_ep50_lr0.001_bs64_BCELoss')
+    output_dir = '/path/to/data/runs/UNetCBM_lam0.0_ep51_lr0.001_bs64_L1Loss_ZScore_v2'
     visualize(output_dir=output_dir)

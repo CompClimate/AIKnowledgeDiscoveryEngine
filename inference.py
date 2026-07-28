@@ -5,17 +5,12 @@ import glob
 import os
 import xarray as xr
 import pandas as pd
-from sklearn.metrics import (roc_auc_score, accuracy_score, precision_score,
-                             recall_score, f1_score, brier_score_loss,
-                             roc_curve, precision_recall_curve, average_precision_score)
 from utils.get_data import get_dataset
 from utils.get_config import config, try_cast, get_model
 from utils.visualization import find_output_dir, plot_sample, visualize
 from scipy import stats, signal
-from sklearn.decomposition import PCA
-from sklearn.metrics import r2_score
-from sklearn.preprocessing import normalize
 from scipy.stats import pearsonr
+import cartopy.crs as ccrs
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # claude written function to find the latest directory (but i have changed directories many times so may be redundant)
@@ -54,11 +49,15 @@ def save_all_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
         if input_norm is None or concept_norm is None or output_norm is None:
             input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
         full_dataset = train_loader.dataset.dataset  # underlying EmulatorDataset
-        full_loader = DataLoader(full_dataset, batch_size=64, shuffle=False)
+        full_loader = DataLoader(full_dataset, batch_size=8, shuffle=False)
 
     loc = config['DATASET']['location']
-    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
-    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    mesh = xr.open_zarr(f'{loc}/{config.get("DATASET", "tmask_name", fallback="tmask_g")}.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0).values
+    sy = config.getint('DATASET', 'spatial_y', fallback=0)
+    sx = config.getint('DATASET', 'spatial_x', fallback=0)
+    if sy > 0 and sx > 0:
+        mask_2d = mask_2d[:sy, :sx]
     ocean_mask = mask_2d == 1
     mask_tensor = torch.tensor(mask_2d, dtype=torch.float32)[None, None, None, :, :].to(DEVICE)
 
@@ -124,8 +123,12 @@ def save_val_preds(model_dir=None, input_norm=None, concept_norm=None, output_no
 
 
     loc = config['DATASET']['location']
-    mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
-    mask_2d = mesh['tmaskutil'].isel(t=0, y=slice(0, 302), x=slice(0, 400)).values
+    mesh = xr.open_zarr(f'{loc}/{config.get("DATASET", "tmask_name", fallback="tmask_g")}.zarr')
+    mask_2d = mesh['tmaskutil'].isel(t=0).values
+    sy = config.getint('DATASET', 'spatial_y', fallback=0)
+    sx = config.getint('DATASET', 'spatial_x', fallback=0)
+    if sy > 0 and sx > 0:
+        mask_2d = mask_2d[:sy, :sx]
     ocean_mask = mask_2d == 1
     mask_tensor = torch.tensor(mask_2d, dtype=torch.float32)[None, None, None, :, :].to(DEVICE)
 
@@ -190,7 +193,7 @@ def compare_mlhc_sst():
     # NA crop indices from mesh
     lon_bounds = (-80, 20)
     lat_bounds = (20, 66)
-    mesh_ds = xr.open_dataset('/quobyte/maikesgrp/kkringel/oras5/ORCA025/mesh/mesh_mask.nc')
+    mesh_ds = xr.open_dataset('/path/to/data/oras5/ORCA025/mesh/mesh_mask.nc')
     nav_lon = mesh_ds['nav_lon'].squeeze()
     nav_lat = mesh_ds['nav_lat'].squeeze()
     mask_na = (nav_lon >= lon_bounds[0]) & (nav_lon <= lon_bounds[1]) & (nav_lat >= lat_bounds[0]) & (nav_lat <= lat_bounds[1])
@@ -199,13 +202,13 @@ def compare_mlhc_sst():
     ocean_mask_na = mesh_ds['tmaskutil'].squeeze().isel(y=y_inds, x=x_inds).values == 1
 
     # sst anomalies
-    sst_anom = xr.open_dataset('/quobyte/maikesgrp/sanah/sst_anomaly/sst_anomalies_2010_detrended.nc')
-    sst_thresh = xr.open_dataset('/quobyte/maikesgrp/sanah/sst_anomaly/sst_anomalies_90th_percentile_detrended_latest.nc')
+    sst_anom = xr.open_dataset('/path/to/data/sst_anomaly/sst_anomalies_2010_detrended.nc')
+    sst_thresh = xr.open_dataset('/path/to/data/sst_anomaly/sst_anomalies_90th_percentile_detrended_latest.nc')
     mhw_sst = (sst_anom.isel(y=y_inds, x=x_inds).sst_anomaly.values > sst_thresh.isel(y=y_inds, x=x_inds).sst_anomaly.values).astype(float)
     mhw_sst = np.where(ocean_mask_na[..., None], mhw_sst, np.nan)
     # mlhc anomalies
-    mlhc_anom = xr.open_dataset('/quobyte/maikesgrp/sanah/mlhc_anomaly/opa0/mlhc_anomalies_2010_detrended.nc')
-    mlhc_thresh = xr.open_dataset('/quobyte/maikesgrp/sanah/mlhc_anomaly/mlhc_anomalies_90th_percentile_detrended_opa0.nc')
+    mlhc_anom = xr.open_dataset('/path/to/data/mlhc_anomaly/opa0/mlhc_anomalies_2010_detrended.nc')
+    mlhc_thresh = xr.open_dataset('/path/to/data/mlhc_anomaly/mlhc_anomalies_90th_percentile_detrended_opa0.nc')
     mhw_mlhc = (mlhc_anom.isel(y=y_inds, x=x_inds).mlhc_anomaly.values > mlhc_thresh.isel(y=y_inds, x=x_inds).mlhc_anomaly.values).astype(float)
     mhw_mlhc = np.where(ocean_mask_na[..., None], mhw_mlhc, np.nan)
     # # overlap: 0=no event, 1=sst only, 2=mlhc only, 3=both
@@ -253,8 +256,8 @@ def compare_mlhc_sst():
     mean_sst_anom, mean_mlhc_mld = [], []  # for MLHC/MLD vs SST comparison
     dates = []
     for year in range(1980, 2019):
-        sst_anom_yr = xr.open_dataset(f'/quobyte/maikesgrp/sanah/sst_anomaly/sst_anomalies_{year}_detrended.nc')
-        mlhc_anom_yr = xr.open_dataset(f'/quobyte/maikesgrp/sanah/mlhc_anomaly/opa0/mlhc_anomalies_{year}_detrended.nc')
+        sst_anom_yr = xr.open_dataset(f'/path/to/data/sst_anomaly/sst_anomalies_{year}_detrended.nc')
+        mlhc_anom_yr = xr.open_dataset(f'/path/to/data/mlhc_anomaly/opa0/mlhc_anomalies_{year}_detrended.nc')
         mhw_sst_yr = (sst_anom_yr.isel(y=y_inds, x=x_inds).sst_anomaly.values > sst_thresh.isel(y=y_inds, x=x_inds).sst_anomaly.values).astype(float)
         mhw_sst_yr = np.where(ocean_mask_na[..., None], mhw_sst_yr, np.nan)
         mhw_mlhc_yr = (mlhc_anom_yr.isel(y=y_inds, x=x_inds).mlhc_anomaly.values > mlhc_thresh.isel(y=y_inds, x=x_inds).mlhc_anomaly.values).astype(float)
@@ -390,76 +393,124 @@ def plot_pearsonr(model_dir):
         compute_and_plot(concept_preds[i], concept_targets[i], f'Pearson Correlation Coefficient on Validation for {concept_names[i]}', f'{model_dir}/pearsonr_abs_{concept_names[i]}.png')
 
 # comparing free pred monthly climatology with predicted and target mlhc
-def compare_free_pred(model_dir):
-    month_names = ["January", "February", "March", "April", "May", "June", 
-          "July", "August", "September", "October", "November", "December"]
-    results = np.load(f'{model_dir}/val_preds_lead0.npz')
-    
-    mlhc = results['preds'].reshape(46, 5, 302, 400)
-    free = results['free_preds'].reshape(46, 5, 302, 400)
-    ocean_mask = results['ocean_mask']
-    land_mask = ~ocean_mask
+def compare_free_pred(model_dirs, nc_path=None, domain_lat=(20, 66), domain_lon=(-80, 20)):
+    if isinstance(model_dirs, str):
+        model_dirs = [model_dirs]
 
-    # Global normalization
+    first = np.load(f'{model_dirs[0]}/val_preds_lead0.npz')
+    ocean_mask = first['ocean_mask']
+    land_mask = ~ocean_mask
+    Y, X = ocean_mask.shape
+
+    all_mlhc, all_free = [], []
+    all_free_c = []
+    for md in model_dirs:
+        r = np.load(f'{md}/val_preds_lead0.npz')
+        n_members = 5
+        N = r['preds'].shape[0]
+        n_steps = N // n_members
+        all_mlhc.append(r['preds'].reshape(n_steps, n_members, Y, X))
+        all_free.append(r['free_preds'].reshape(n_steps, n_members, Y, X))
+        ckpt = torch.load(f'{md}/UNetCBM_epoch100.pt', map_location='cpu', weights_only=False)
+        all_free_c.append(ckpt['model_state_dict']['output_head.weight'].squeeze().numpy()[-1])
+
+    mlhc = np.mean(all_mlhc, axis=0)
+    free_c = float(np.mean(all_free_c))
+    # Multiply by free_c so sign reflects contribution direction to MLHC output.
+    # free_preds is in bottleneck space; free_c orients it correctly (may be negative).
+    free = np.mean(all_free, axis=0) #* free_c
+
     mlhc_mean, mlhc_std = mlhc.mean(), mlhc.std()
     free_mean, free_std = free.mean(), free.std()
 
-    months = (np.arange(46) + 5 - 1) % 12
-    
-    fig1, ax1 = plt.subplots(4, 3, figsize=(12, 10))
-    fig2, ax2 = plt.subplots(4, 3, figsize=(12, 10))
-    fig3, ax3 = plt.subplots(4, 3, figsize=(12, 10))
-    
-    fig1.suptitle('Free Concept Monthly Climatology (Normalized)')
-    fig2.suptitle('MLHC Predicted Monthly Climatology (Normalized)')
-    fig3.suptitle('Bias (MLHC - Free) Monthly Climatology')
-    
-    ax1 = ax1.flatten()
-    ax2 = ax2.flatten()
-    ax3 = ax3.flatten()
+    months = (np.arange(n_steps) + 5 - 1) % 12
+    seasons = {"DJF": [11, 0, 1], "MAM": [2, 3, 4], "JJA": [5, 6, 7], "SON": [8, 9, 10]}
 
-    for i in range(12):
-        month_idx = np.where(months == i)[0]
-        
-        month_free = ((free[month_idx] - free_mean) / free_std).mean(axis=(0, 1))
-        month_mlhc = ((mlhc[month_idx] - mlhc_mean) / mlhc_std).mean(axis=(0, 1))
-        month_bias = month_mlhc - month_free
+    season_biases = {}
+    for sea_name, m_indices in seasons.items():
+        idx = np.concatenate([np.where(months == m)[0] for m in m_indices])
+        # Both normalized to their own σ so units are comparable (relative σ).
+        # preds is denormalized physical MLHC; free*free_c is in normalized output space —
+        # separate σ normalization bridges that gap while preserving spatial sign.
+        sea_free = ((free[idx] - free_mean) / free_std).mean(axis=(0, 1))
+        sea_mlhc = ((mlhc[idx] - mlhc_mean) / mlhc_std).mean(axis=(0, 1))
+        season_biases[sea_name] = sea_mlhc - sea_free
 
-        r = pearsonr(month_free[ocean_mask], month_mlhc[ocean_mask])[0]
+    vmax = max(np.abs(b[ocean_mask]).max() for b in season_biases.values())
 
-        # Use the same vmin/vmax for Climatology
-        im1 = ax1[i].imshow(np.ma.masked_where(land_mask, month_free), origin='lower', vmin=-2, vmax=2)
-        im2 = ax2[i].imshow(np.ma.masked_where(land_mask, month_mlhc), origin='lower', vmin=-2, vmax=2)
-        
-        # Use diverging for Bias
-        im3 = ax3[i].imshow(np.ma.masked_where(land_mask, month_bias), origin='lower', cmap='RdBu_r', vmin=-1, vmax=1)
+    data_proj = ccrs.PlateCarree()
+    map_proj  = ccrs.Mercator()
 
-        ax1[i].set_title(f'{month_names[i]} | r = {r:.2f}')
-        ax2[i].set_title(month_names[i])
-        ax3[i].set_title(month_names[i])
+    # load nav coords if available
+    if nc_path is not None:
+        ds_nc = xr.open_dataset(nc_path)
+        domain_mask = (
+            (ds_nc['nav_lat'] >= domain_lat[0]) & (ds_nc['nav_lat'] <= domain_lat[1]) &
+            (ds_nc['nav_lon'] >= domain_lon[0]) & (ds_nc['nav_lon'] <= domain_lon[1])
+        )
+        y_crop = np.where(domain_mask.any(dim='x'))[0]
+        x_crop = np.where(domain_mask.any(dim='y'))[0]
+        nav_lat = ds_nc['nav_lat'].isel(y=y_crop, x=x_crop).values[:Y, :X]
+        nav_lon = ds_nc['nav_lon'].isel(y=y_crop, x=x_crop).values[:Y, :X]
+    else:
+        nav_lat = nav_lon = None
 
-        for ax in [ax1[i], ax2[i], ax3[i]]:
-            ax.set_xticks([])
-            ax.set_yticks([])
+    cmap = plt.get_cmap('PiYG').copy()
+    cmap.set_bad(color='lightgray')
+    cbar_label = r'MLHC Pred $-$ Free Concept ($\sigma$)'
 
-    # Add shared colorbars to the right of each figure
-    fig1.colorbar(im1, ax=ax1.tolist(), shrink=0.8, label='Std Dev ($\sigma$)')
-    fig2.colorbar(im2, ax=ax2.tolist(), shrink=0.8, label='Std Dev ($\sigma$)')
-    fig3.colorbar(im3, ax=ax3.flatten().tolist(), shrink=0.8, label='Bias ($\Delta \sigma$)')
+    def _plot_season(ax, sea_name, bias):
+        masked = np.ma.masked_where(land_mask, bias)
+        im = ax.pcolormesh(nav_lon, nav_lat, masked,
+                           transform=data_proj, cmap=cmap, vmin=-vmax, vmax=vmax, zorder=1)
+        ax.set_facecolor('lightgray')
+        ax.contourf(nav_lon, nav_lat, land_mask.astype(float),
+                    levels=[0.5, 1.5], colors=['lightgray'], transform=data_proj, zorder=2)
+        ax.contour(nav_lon, nav_lat, land_mask.astype(float),
+                   levels=[0.5], colors='k', linewidths=0.4, transform=data_proj, zorder=3)
+        ax.set_extent([-80, 20, 20, 66], crs=data_proj)
+        ax.set_title(sea_name)
+        return im
 
-    fig1.savefig(f'{model_dir}/free_pred_clim.png', bbox_inches='tight')
-    fig2.savefig(f'{model_dir}/mlhc_pred_clim.png', bbox_inches='tight')
-    fig3.savefig(f'{model_dir}/bias_clim.png', bbox_inches='tight')
+    # DJF + JJA only, colorbar on the right
+    fig2, axes2 = plt.subplots(1, 2, figsize=(9, 4),
+                               subplot_kw={'projection': map_proj},
+                               layout='constrained')
+    for ax, sea_name in zip(axes2, ['DJF', 'JJA']):
+        im2 = _plot_season(ax, sea_name, season_biases[sea_name])
+    fig2.colorbar(im2, ax=axes2.tolist(), orientation='vertical', shrink=0.8,
+                  pad=0.02, label=cbar_label)
+    fig2.savefig('paper_figs/free_pred_seasonal_bias_djf_jja.png', dpi=200, bbox_inches='tight')
+    plt.close(fig2)
+
+    # All 4 seasons, colorbar on the bottom
+    fig4, axes4 = plt.subplots(1, 4, figsize=(16, 4),
+                               subplot_kw={'projection': map_proj},
+                               layout='constrained')
+    for ax, (sea_name, bias) in zip(axes4, season_biases.items()):
+        im4 = _plot_season(ax, sea_name, bias)
+    fig4.colorbar(im4, ax=axes4.tolist(), orientation='horizontal', shrink=0.6,
+                  pad=0.02, label=cbar_label)
+    fig4.savefig('paper_figs/free_pred_seasonal_bias.png', dpi=200, bbox_inches='tight')
+    plt.close(fig4)
+
 
 # helper function to caluclate monthly and seasonal acc 
-def calculate_correlation(p_val, t_val, t_all, val_months, all_months, label):
+def calculate_correlation(p_val, t_val, t_all, val_months, all_months, label,
+                          ocean_mask=None, nav_lat=None, nav_lon=None, save_dir=None):
+    concept_dict = {'vori': 'Richardson number', 'vos2': 'Vertical shear', 'von2': 'Buoyancy frequency',
+    'vohfe': 'Heat flux entrainment', 'mxl_tendency': 'Mixed layer depth tendency', 'MLHC': 'Mixed layer heat content'}
     months_names = ["January", "February", "March", "April", "May", "June", 
                     "July", "August", "September", "October", "November", "December"]
     
+    p_val  = np.nan_to_num(p_val,  nan=0.0)
+    t_val  = np.nan_to_num(t_val,  nan=0.0)
+    t_all  = np.nan_to_num(t_all,  nan=0.0)
+
     anom_store = {'pred': {}, 'target': {}}
-    
+
     print(f"\n=== Evaluating: {label} ===")
-    
+
     # monthly Loop
     for i in range(12):
         # climatology from FULL dataset
@@ -484,273 +535,377 @@ def calculate_correlation(p_val, t_val, t_all, val_months, all_months, label):
         s_p = np.concatenate([anom_store['pred'][m] for m in m_indices], axis=0)
         s_t = np.concatenate([anom_store['target'][m] for m in m_indices], axis=0)
         s_r = pearsonr(s_p, s_t, axis=0)
-        print(f"{sea_name} - Mean ACC: {np.nanmean(s_r.statistic):.4f}")
+        stat = s_r.statistic.copy()
+        if ocean_mask is not None:
+            stat[~ocean_mask] = np.nan
+        mean_acc = np.nanmean(stat[ocean_mask] if ocean_mask is not None else stat)
+        data_proj = ccrs.PlateCarree()
+        map_proj  = ccrs.Robinson()
+        fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={'projection': map_proj})
+        import cartopy.feature as cfeature
+        cmap = plt.get_cmap('RdBu').copy()
+        cmap.set_bad(color='lightgray')
+        land_mask = ~ocean_mask if ocean_mask is not None else np.zeros_like(stat, dtype=bool)
+        # mask cells where the tripolar fold causes longitude discontinuities
+        lon_wrap = np.zeros(stat.shape, dtype=bool)
+        lon_wrap[:, :-1] |= np.abs(np.diff(nav_lon, axis=1)) > 90
+        lon_wrap[:-1, :] |= np.abs(np.diff(nav_lon, axis=0)) > 90
+        masked = np.ma.masked_where(land_mask | lon_wrap, stat)
+        ax.set_facecolor('lightgray')
+        im = ax.pcolormesh(nav_lon, nav_lat, masked,
+                           transform=data_proj, cmap=cmap, vmin=-1, vmax=1, zorder=1)
+        ax.add_feature(cfeature.LAND, facecolor='lightgray', zorder=2)
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.4, zorder=3)
+        ax.set_global()
+        plt.colorbar(im, ax=ax, label='Pearson r')
+        ax.set_title(f'{concept_dict[label]} | {sea_name} ACC: {mean_acc:.2f}')
+        plt.tight_layout()
+        out_path = os.path.join(save_dir, f'{label}_{sea_name}_acc.png') if save_dir else f'{label}_{sea_name}_acc.png'
+        fig.savefig(out_path, dpi=200, bbox_inches='tight')
+        print(f"{sea_name} - Mean ACC: {mean_acc:.4f}")
 
-# acc for specific model
-def model_acc(model_dir):
-    results = np.load(f'{model_dir}/all_preds.npz', allow_pickle=True)
-    
-    # getting main target
-    out_mean, out_std = results['output_mean'], results['output_std']
-    preds = results['preds'] * out_std + out_mean
-    targets = results['targets'] * out_std + out_mean
+# acc for specific model(s)
+def model_acc(model_dirs, nc_path=None, domain_lat=(20, 66), domain_lon=(-80, 20), save_dir=None):
+    print('in it!')
+    all_preds = []
+    all_c_preds = []
 
-    # getting concepts
-    c_preds = results['concept_preds']
-    c_targets = results['concept_targets']
-    c_names = results['concept_names']
+    # targets and metadata from the first model once
+    first_results = np.load(f'{model_dirs[0]}/all_preds.npz', allow_pickle=True)
+    out_mean, out_std = first_results['output_mean'], first_results['output_std']
+    ocean_mask = first_results['ocean_mask']
+    Y, X = ocean_mask.shape
 
+    nav_lat, nav_lon = None, None
+    if nc_path is not None:
+        ds_nc = xr.open_dataset(nc_path)
+        domain_mask = (
+            (ds_nc['nav_lat'] >= domain_lat[0]) & (ds_nc['nav_lat'] <= domain_lat[1]) &
+            (ds_nc['nav_lon'] >= domain_lon[0]) & (ds_nc['nav_lon'] <= domain_lon[1])
+        )
+        #domain_mask = ((ds_nc.nav_lat >= -60) & (ds_nc.nav_lat <= 60) & ((ds_nc.nav_lon >= 120) | (ds_nc.nav_lon <= -75)))
+        y_crop = np.where(domain_mask.any(dim='x'))[0]
+        x_crop = np.where(domain_mask.any(dim='y'))[0]
+        nav_lat = ds_nc['nav_lat'].isel(y=y_crop, x=x_crop).values[:Y, :X]
+        nav_lon = ds_nc['nav_lon'].isel(y=y_crop, x=x_crop).values[:Y, :X]
+
+    targets = first_results['targets'] * out_std + out_mean
+    c_targets = first_results['concept_targets']
+    c_names = first_results['concept_names']
+
+    # predictions from all models in the ensemble
+    for model_dir in model_dirs:
+        results = np.load(f'{model_dir}/all_preds.npz', allow_pickle=True)
+        # Rescale predictions using the standard normalization parameters
+        m_preds = results['preds'] * out_std + out_mean
+        m_c_preds = results['concept_preds']
+
+        all_preds.append(m_preds)
+        all_c_preds.append(m_c_preds)
+        print(f'done {model_dir}')
+
+    # ensemble by averaging across the model dimension (axis 0)
+    preds = np.mean(all_preds, axis=0)
+    c_preds = np.mean(all_c_preds, axis=0)
+
+    # validation indexing
     val_start = 1852
     all_months = np.tile((np.arange(463) + 6) % 12, 5)
     val_months = all_months[val_start:]
 
-    # corr for mlhc
-    calculate_correlation(preds[val_start:], targets[val_start:], targets, 
-                          val_months, all_months, "MLHC Output")
+    # correlation for the final MLHC Output
+    calculate_correlation(preds[val_start:], targets[val_start:], targets,
+                          val_months, all_months, "MLHC",
+                          ocean_mask=ocean_mask, nav_lat=nav_lat, nav_lon=nav_lon, save_dir=save_dir)
 
-    # corr for each concept
+    # correlation for each physical concept
     for j, name in enumerate(c_names):
         p_val_c = c_preds[j, val_start:]
         t_val_c = c_targets[j, val_start:]
         t_all_c = c_targets[j, :]
-        
-        calculate_correlation(p_val_c, t_val_c, t_all_c, 
-                              val_months, all_months, f"Concept: {name}")
 
-# denormalizing acc calculation helper
-def calculate_correlation_denorm(p_val, t_val, t_all, val_months, all_months, label):
-    
-    months_names = ["January", "February", "March", "April", "May", "June", 
-                    "July", "August", "September", "October", "November", "December"]
-    
-    anom_store = {'pred': {}, 'target': {}}
-    
-    print(f"\n=== Evaluating: {label} (Physical Units) ===")
-    
-    # Monthly Loop
-    for i in range(12):
-        # 1. Climatology from FULL denormalized dataset
-        m_clim = np.nanmean(t_all[all_months == i], axis=0)
-        
-        # 2. Extract Validation slices and calculate physical anomalies
-        mask = (val_months == i)
-        m_p_anom = p_val[mask] - m_clim
-        m_t_anom = t_val[mask] - m_clim
-        
-        anom_store['pred'][i] = m_p_anom
-        anom_store['target'][i] = m_t_anom
-        
-        # 3. Monthly Pearson R (Temporal)
-        m_r = pearsonr(m_p_anom, m_t_anom, axis=0)
-        print(f"{months_names[i]:<10} - Mean ACC: {np.nanmean(m_r.statistic):.4f}")
+        calculate_correlation(p_val_c, t_val_c, t_all_c,
+                              val_months, all_months, name,
+                              ocean_mask=ocean_mask, nav_lat=nav_lat, nav_lon=nav_lon, save_dir=save_dir)
 
-    # Seasonal Pooling
-    seasons = {"DJF": [11, 0, 1], "MAM": [2, 3, 4], "JJA": [5, 6, 7], "SON": [8, 9, 10]}
-    print(f"\n--- Seasonal ACC (Pooled) for {label} ---")
-    for sea_name, m_indices in seasons.items():
-        s_p = np.concatenate([anom_store['pred'][m] for m in m_indices], axis=0)
-        s_t = np.concatenate([anom_store['target'][m] for m in m_indices], axis=0)
-        s_r = pearsonr(s_p, s_t, axis=0)
-        print(f"{sea_name} - Mean ACC: {np.nanmean(s_r.statistic):.4f}")
-
-# acc but for denormalzed concepts and targets 
-def model_acc_denorm(model_dir):
-    results = np.load(f'{model_dir}/all_preds.npz', allow_pickle=True)
-    
-    # 1. Denormalize Main MLHC Output
-    # Broadcasting (1,) or (1, Y, X) over (Time, Y, X)
-    out_mean, out_std = results['output_mean'], results['output_std']
-    preds = (results['preds'] * out_std) + out_mean
-    targets = (results['targets'] * out_std) + out_mean
-
-    # 2. Denormalize Concepts
-    # Shape of concept_preds: (Time, Num_Concepts, Y, X)
-    # Shape of concept_mean: (Num_Concepts, 1, 1) or (Num_Concepts, Y, X)
-    c_preds_raw = results['concept_preds']
-    c_targets_raw = results['concept_targets']
-    c_mean = results['concept_mean']
-    c_std = results['concept_std']
-    c_names = results['concept_names']
-
-    # Indices and slicing
-    val_start = 1852
-    all_months = np.tile((np.arange(463) + 6) % 12, 5)
-    val_months = all_months[val_start:]
-
-    # --- Run for MLHC ---
-    calculate_correlation_denorm(preds[val_start:], targets[val_start:], targets, 
-                                 val_months, all_months, "MLHC Output")
-
-    # --- Run for each Concept ---
-    for j, name in enumerate(c_names):
-        # Denormalize specific concept j
-        # We index j first, then multiply/add to ensure broadcasting matches (Time, Y, X)
-        p_val_c = (c_preds_raw[val_start:, j] * c_std[j]) + c_mean[j]
-        t_val_c = (c_targets_raw[val_start:, j] * c_std[j]) + c_mean[j]
-        t_all_c = (c_targets_raw[:, j] * c_std[j]) + c_mean[j]
-        
-        calculate_correlation_denorm(p_val_c, t_val_c, t_all_c, 
-                                     val_months, all_months, f"Concept: {name}")
 
 # reconstructing the time series of the validation and test set (averaged spatially, comparing to target)
 # do this per opa so the the plot looks smooth
-def plot_ensemble_time_series(model_dir, split='val', n_members=5):
-    
-    # load data
-    data_path = os.path.join(model_dir, f'all_preds.npz')
-    data = np.load(data_path)
-    
-    preds = data['preds'][1852:]
-    targets = data['targets'][1852:]
-    
-    # reshape to separate opa since they are interleaved
-    # (time_steps, opa, y, x)
-    n_steps = len(preds) // n_members
-    preds_ens = preds[:n_steps * n_members].reshape(n_steps, n_members, 302, 400)
-    targets_ens = targets[:n_steps * n_members].reshape(n_steps, n_members, 302, 400)
-    
-    # calculate mean over basin
-    # resulting shape: (time_steps, n_members)
-    basin_preds = np.nanmean(preds_ens, axis=(2, 3))
-    basin_targets = np.nanmean(targets_ens, axis=(2, 3))
-    
-    # calculate ensemble mean
-    ens_mean = np.mean(basin_preds, axis=1)
-    ens_std = np.std(basin_preds, axis=1)
-    # target remains the same for all members at each time step (just opa0)
-    target_line = basin_targets[:, 0] 
-    
-    # plotting
-    fig, ax = plt.subplots(figsize=(10, 5))
-    
-    time_idx = np.arange(len(ens_mean))
-    
-    # plot the spread 
-    ax.fill_between(time_idx, ens_mean - ens_std, ens_mean + ens_std, 
-                    color='orange', alpha=0.3, label='Ensemble Spread ($\sigma$)')
-    
-    # mean prediction
-    ax.plot(time_idx, ens_mean, color='darkorange', linewidth=2, label='ConceptBUOY')
-    
-    # ground truth
-    ax.plot(time_idx, target_line, color='blue', linestyle='--', linewidth=1.5, label='ORAS5 Target')
-    
-    ax.set_title(f"Basin-Averaged MLHC Evolution ({split.capitalize()} Set)", fontsize=14)
-    ax.set_ylabel("Mixed Layer Heat Content (Standardized Units)")
-    ax.set_xlabel("Months in Test Period")
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.legend(loc='upper left', frameon=False)
-    
+def plot_ml_ensemble(model_dirs_cbm, model_dirs_no_cbm=None, model_dirs_no_free=None, split='val', n_members=5, save_dir=None):
+    COLORS = {
+        'target':   '#333333',
+        'cbm':      '#2a9d8f',  # teal  — OceanCBM (free1)
+        'no_free':  '#e76f51',  # coral — prescription-only (free0)
+        'no_cbm':   '#9b5de5',  # purple — no-concept baseline (unsup)
+    }
+
+    def _collect(model_dirs):
+        all_pred_anoms = []
+        target_anom = None
+
+        for model_dir in model_dirs:
+            data = np.load(os.path.join(model_dir, 'all_preds.npz'), allow_pickle=True)
+            out_std    = data['output_std']
+            out_mean   = data['output_mean']
+            ocean_mask = data['ocean_mask']  # (Y, X) bool
+
+            # denormalize to physical units (W m⁻²)
+            targets_all = data['targets'] * out_std + out_mean
+            preds_all   = data['preds']   * out_std + out_mean
+
+            N_total   = len(targets_all)
+            n_total_t = N_total // n_members
+
+            Y, X = ocean_mask.shape
+            targets_r = targets_all[:n_total_t * n_members].reshape(n_total_t, n_members, Y, X)
+            preds_r   = preds_all[:n_total_t * n_members].reshape(n_total_t, n_members, Y, X)
+
+            # mask land before spatial mean
+            targets_r = np.where(ocean_mask[None, None], targets_r, np.nan)
+            preds_r   = np.where(ocean_mask[None, None], preds_r,   np.nan)
+
+            targets_ts = np.nanmean(targets_r, axis=(1, 2, 3))  # (n_total_t,)
+            preds_ts   = np.nanmean(preds_r,   axis=(1, 2, 3))
+
+            # val/test slice (sample 1852 onward = time step 370 onward)
+            val_start_t = 1852 // n_members
+            n_steps     = (N_total - 1852) // n_members
+
+            val_t = targets_ts[val_start_t : val_start_t + n_steps]
+            val_p = preds_ts[val_start_t   : val_start_t + n_steps]
+
+            all_pred_anoms.append(val_p)
+            if target_anom is None:
+                target_anom = val_t
+
+        mean = np.mean(all_pred_anoms, axis=0)
+        std  = np.std(all_pred_anoms,  axis=0)
+        return mean, std, target_anom
+
+    cbm_mean, cbm_std, target_mean = _collect(model_dirs_cbm)
+    r_cbm = pearsonr(cbm_mean, target_mean)
+    print(f'CBM (free1)          r={r_cbm.statistic:.4f}  p={r_cbm.pvalue:.4g}')
+
+    if model_dirs_no_free is not None:
+        no_free_mean, no_free_std, _ = _collect(model_dirs_no_free)
+        r_no_free = pearsonr(no_free_mean, target_mean)
+        print(f'Prescription-only baseline  r={r_no_free.statistic:.4f}  p={r_no_free.pvalue:.4g}')
+
+    if model_dirs_no_cbm is not None:
+        no_cbm_mean, no_cbm_std, _ = _collect(model_dirs_no_cbm)
+        r_no_cbm = pearsonr(no_cbm_mean, target_mean)
+        print(f'Prediction-only baseline  r={r_no_cbm.statistic:.4f}  p={r_no_cbm.pvalue:.4g}')
+
+    fig, ax = plt.subplots(figsize=(6, 3))
+    time_idx    = np.arange(len(cbm_mean))
+    date_range  = pd.date_range(start="2010-05-01", periods=len(cbm_mean), freq='MS')
+    date_labels = [d.strftime('%Y') for d in date_range]
+
+    ax.plot(time_idx, target_mean, color=COLORS['target'], lw=0.5, linestyle='--', label='ORAS5')
+
+    if model_dirs_no_cbm is not None:
+        ax.fill_between(time_idx, no_cbm_mean - no_cbm_std, no_cbm_mean + no_cbm_std,
+                        color=COLORS['no_cbm'], alpha=0.25)
+        ax.plot(time_idx, no_cbm_mean, color=COLORS['no_cbm'], linewidth=2, label='Prediction-only')
+
+    if model_dirs_no_free is not None:
+        ax.fill_between(time_idx, no_free_mean - no_free_std, no_free_mean + no_free_std,
+                        color=COLORS['no_free'], alpha=0.25)
+        ax.plot(time_idx, no_free_mean, color=COLORS['no_free'], linewidth=2, label='Prescription-only')
+
+    ax.fill_between(time_idx, cbm_mean - 2*cbm_std, cbm_mean + 2*cbm_std,
+                    color=COLORS['cbm'], alpha=0.3)
+    ax.plot(time_idx, cbm_mean, color=COLORS['cbm'], lw=0.5, label='OceanCBM')
+
+    ax.set_xticks(time_idx[::12])
+    ax.set_xticklabels(date_labels[::12], rotation=0)
+    #ax.set_title("Spatially averaged MLHC time series")
+    ax.set_ylabel("MLHC (J m⁻²)")
+    ax.set_xlabel("Date")
+    leg = ax.legend(loc='upper right', frameon=True, framealpha=0.5,
+                    facecolor='#e8e8e8', edgecolor='#aaaaaa')
+    leg.get_frame().set_linewidth(0.8)
+    ax.spines[['top', 'right']].set_visible(False)
+
     plt.tight_layout()
-    
-    # save
-    save_path = os.path.join(model_dir, f'ensemble_ts_{split}.png')
-    plt.savefig(save_path, dpi=300)
-    print(f"Figure saved to: {save_path}")
-    
-    return ens_mean, target_line
+    plt.savefig(f"paper_figs/concepts_4/{save_dir}/time_series_pred.pdf")
 
-# same function as above, but for the concepts
-def plot_concept_ensemble_ts(model_dir, split='val', n_members=5):
-   
-    data_path = os.path.join(model_dir, 'all_preds.npz')
-    data = np.load(data_path)
-    
-    # load concept data 
-    # the same temporal slice [1852:] as MLHC plot
-    c_preds = data[f'concept_preds'][:, 1852:, :, :]
-    c_targets = data[f'concept_targets'][:, 1852:, :, :]
-    concept_names = data['concept_names']
-    
-    num_concepts = c_preds.shape[0]
-    n_steps = c_preds.shape[1] // n_members
-    
-    if concept_names is None:
-        concept_names = [f"Concept {i}" for i in range(num_concepts)]
+    return cbm_mean, target_mean
 
-    for i in range(num_concepts):
-        # same reshaping as above, per concept
-        this_c_pred = c_preds[i, :n_steps*n_members].reshape(n_steps, n_members, 302, 400)
-        this_c_targ = c_targets[i, :n_steps*n_members].reshape(n_steps, n_members, 302, 400)
-        
-        # basin average
-        basin_p = np.nanmean(this_c_pred, axis=(2, 3))
-        basin_t = np.nanmean(this_c_targ, axis=(2, 3))
-        
-        # mean
-        mu = np.mean(basin_p, axis=1)
-        sigma = np.std(basin_p, axis=1)
-        truth = basin_t[:, 0]
-        
-        # plotting
-        fig, ax = plt.subplots(figsize=(10, 4))
-        time_idx = np.arange(len(mu))
-        
-        ax.fill_between(time_idx, mu - sigma, mu + sigma, color='teal', alpha=0.2, label='Ensemble Spread')
-        ax.plot(time_idx, mu, color='teal', linewidth=2, label=f'Predicted {concept_names[i]}')
-        ax.plot(time_idx, truth, color='black', linestyle='--', alpha=0.7, label='Target')
-        
-        ax.set_title(f"Mechanism Reconstruction: {concept_names[i]}", fontsize=12, fontweight='bold')
-        ax.set_ylabel("Standardized Concept")
-        ax.set_xlabel("Months in Test Period")
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.legend(frameon=False, loc='upper left')
-        
+def plot_concept_ensemble_ts(model_dirs, model_dirs_no_free=None, split='val', n_members=5, save_dir=None):
+    concept_dict = {'vori': 'Richardson number', 'vos2': 'Vertical shear', 'von2': 'Buoyancy frequency',
+    'vohfe': 'Heat flux entrainment', 'mxl_tendency': 'Mixed layer depth tendency', 'MLHC': 'Mixed layer heat content'}
+    concept_units = {'vori': 'Dimensionless', 'vos2': 's⁻²', 'von2': 's⁻²',
+    'vohfe': 'W m⁻²', 'mxl_tendency': 'm/month', 'MLHC': 'J m⁻²'}
+
+    COLORS = {
+        'target':   '#333333',
+        'cbm':      '#2a9d8f',  # teal  — OceanCBM (free1)
+        'no_free':  '#e76f51',  # coral — prescription-only (free0)
+    }
+
+    def _collect_concept(dirs, concept_idx):
+        all_preds_ts = []
+        target_ts = None
+        for model_dir in dirs:
+            data = np.load(os.path.join(model_dir, 'all_preds.npz'), allow_pickle=True)
+            ocean_mask = data['ocean_mask']
+            c_mean     = data['concept_mean'][concept_idx]
+            c_std      = data['concept_std'][concept_idx]
+            c_preds_all   = data['concept_preds'][concept_idx]   * c_std + c_mean
+            c_targets_all = data['concept_targets'][concept_idx] * c_std + c_mean
+            N_total   = len(c_preds_all)
+            n_total_t = N_total // n_members
+            val_start_t = 1852 // n_members
+            n_steps     = (N_total - 1852) // n_members
+            Y, X = ocean_mask.shape
+            c_preds_r = c_preds_all[:n_total_t * n_members].reshape(n_total_t, n_members, Y, X)
+            c_targs_r = c_targets_all[:n_total_t * n_members].reshape(n_total_t, n_members, Y, X)
+            c_preds_r = np.where(ocean_mask[None, None], c_preds_r, np.nan)
+            c_targs_r = np.where(ocean_mask[None, None], c_targs_r, np.nan)
+            c_preds_ts  = np.nanmean(c_preds_r, axis=(1, 2, 3))
+            c_targs_ts  = np.nanmean(c_targs_r, axis=(1, 2, 3))
+            all_preds_ts.append(c_preds_ts[val_start_t : val_start_t + n_steps])
+            if target_ts is None:
+                target_ts = c_targs_ts[val_start_t : val_start_t + n_steps]
+        mean = np.mean(all_preds_ts, axis=0)
+        std  = np.std(all_preds_ts,  axis=0)
+        return mean, std, target_ts
+
+    # load concept names from first model
+    first_data = np.load(os.path.join(model_dirs[0], 'all_preds.npz'))
+    concept_names = first_data['concept_names']
+
+    for i, cname in enumerate(concept_names):
+        name = concept_dict[cname]
+
+        cbm_mean, cbm_std, target_c_mean = _collect_concept(model_dirs, i)
+        r_cbm = pearsonr(cbm_mean, target_c_mean)
+        print(f'{cname} OceanCBM          r={r_cbm.statistic:.4f}')
+
+        if model_dirs_no_free is not None:
+            nf_mean, nf_std, _ = _collect_concept(model_dirs_no_free, i)
+            r_nf = pearsonr(nf_mean, target_c_mean)
+            print(f'{cname} Prescription-only  r={r_nf.statistic:.4f}')
+
+        fig, ax = plt.subplots(figsize=(6, 3))
+        time_idx   = np.arange(len(cbm_mean))
+        date_range = pd.date_range(start="2010-05-01", periods=len(cbm_mean), freq='MS')
+        date_labels = [d.strftime('%Y') for d in date_range]
+
+        ax.plot(time_idx, target_c_mean, color=COLORS['target'], linestyle='--',
+                linewidth=0.5, label='ORAS5')
+
+        if model_dirs_no_free is not None:
+            ax.fill_between(time_idx, nf_mean - nf_std, nf_mean + nf_std,
+                            color=COLORS['no_free'], alpha=0.2)
+            ax.plot(time_idx, nf_mean, color=COLORS['no_free'], linewidth=2,
+                    label='Prescription-only')
+
+        ax.fill_between(time_idx, cbm_mean - 2*cbm_std, cbm_mean + 2*cbm_std,
+                        color=COLORS['cbm'], alpha=0.3)
+        ax.plot(time_idx, cbm_mean, color=COLORS['cbm'], lw=0.5, label='OceanCBM')
+
+        ax.set_xticks(time_idx[::12])
+        ax.set_xticklabels(date_labels[::12], rotation=0)
+        #ax.set_title(f"Spatially averaged {name} time series")
+        ax.set_ylabel(f"{concept_units[cname]}")
+        ax.set_xlabel("Date")
+        leg = ax.legend(loc='upper right', frameon=True, framealpha=0.5,
+                        facecolor='#e8e8e8', edgecolor='#aaaaaa')
+        leg.get_frame().set_linewidth(0.8)
+        ax.spines[['top', 'right']].set_visible(False)
+
         plt.tight_layout()
-        save_path = os.path.join(model_dir, f'concept_{i}_ts.png')
-        plt.savefig(save_path, dpi=300)
-        plt.close() # Close to save memory
-        print(f"Saved concept plot: {save_path}")
+        save_path = f"paper_figs/concepts_4/{save_dir}/{cname}_ts.pdf"
+        fig.tight_layout()
+        plt.savefig(save_path)
+        plt.close(fig)
+        print(f"Saved ensemble concept plot: {save_path}")
 
 
 if __name__ == '__main__':
-    # paths = [
-    # "/quobyte/maikesgrp/mlhc_cbm/runs_041326/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore",
-    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.0_ep101_lr0.001_bs64_L1Loss_ZScore_v4",
-    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5",
-    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v6",
-    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v7",
-    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v8",
-    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v9",
-    # "/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v10"]
+    output_dir = '/path/to/data/global_cbm/UNetCBM_adaptive_ep101_lr0.001_bs64_L1Loss_ZScore_v1'
+    nc_path = '/path/to/data/oras5/somxl010/opa0/somxl010_ORAS5_1m_199812_grid_T_02.nc'
+    #visualize(output_dir)
+    # input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
+    # from torch.utils.data import DataLoader  
+    # full_loader = DataLoader(train_loader.dataset.dataset, batch_size=8, shuffle=False, num_workers=0) 
+    # save_all_preds(model_dir=output_dir, input_norm=input_norm, concept_norm=concept_norm,                
+    #                    output_norm=output_norm, output_dir=output_dir, full_loader=full_loader) 
+    model_acc([output_dir], nc_path=nc_path, domain_lat=(-90, 90), domain_lon=(-180, 180), save_dir=output_dir)
+    
+    # for i in [4]:
+    #     # Use list comprehensions to iterate through versions 1 to 5
+    #     dirs_free1 = [f'/path/to/data/paper_cbm/concepts_{i}/free1/UNetCBM_adaptive_ep101_lr0.001_bs64_L1Loss_ZScore_v{v}' for v in range(1, 6)]
+
+    #     dirs_free0 = [f'/path/to/data/paper_cbm/concepts_{i}/free0/UNetCBM_adaptive_ep101_lr0.001_bs64_L1Loss_ZScore_v{v}' for v in range(1, 6)]
+
+    #     dirs_unsup = [f'/path/to/data/paper_cbm/concepts_{i}/unsup/UNetCBM_lam0_ep101_lr0.001_bs64_L1Loss_ZScore_v{v}' for v in range(1, 6)]
+
+    #     #compare_free_pred(model_dirs=dirs_free1, nc_path=nc_path)
+    #     # Run accuracy checks
+    #     # model_acc(model_dirs=dirs_free1, nc_path=nc_path, save_dir='free1')
+    #     # model_acc(model_dirs=dirs_free0, nc_path=nc_path, save_dir='free0')
+    #     # model_acc(model_dirs=dirs_unsup, nc_path=nc_path, save_dir='unsup')
+
+    #     # Time series 
+    #     #plot_ml_ensemble(model_dirs_cbm=dirs_free1, save_dir='free1')
+    #     plot_concept_ensemble_ts(model_dirs=dirs_free1, save_dir='free1')
+        
+        
+                                                                                             
+    # input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
+    # full_loader = DataLoader(train_loader.dataset.dataset, batch_size=64, shuffle=False, num_workers=0)      
+    
+    # model_dirs = []                                                                                          
+    # for i in range(1, 12):
+    #     print(i, flush=True)
+    #     model_dir = f'{path}/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v{i}'
+    #     ckpt = torch.load(f'{model_dir}/UNetCBM_epoch100.pt', map_location='cpu', weights_only=False)        
+    #     print(i, ckpt['model_state_dict']['output_head.weight'].squeeze())                                   
+    #     save_all_preds(model_dir=model_dir, input_norm=input_norm, concept_norm=concept_norm,                
+    #                     output_norm=output_norm, output_dir=model_dir, full_loader=full_loader)               
+    #     model_dirs.append(model_dir)                                                                         
+                                                                                                            
+    #plot_ml_ensemble(model_dirs)                                                                             
+    #plot_concept_ensemble_ts(model_dirs)
     # for path in paths:
     #     ckpt = ckpt = torch.load(f'{path}/UNetCBM_epoch100.pt', map_location='cpu', weights_only=False)
     #     print(path)
     #     print(ckpt['model_state_dict']['output_head.weight'].squeeze())
     # breakpoint()
-    # plot_concept_ensemble_ts('/quobyte/maikesgrp/mlhc_cbm/runs_041326/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore')
+    # plot_concept_ensemble_ts('/path/to/data/runs_041326/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore')
     # breakpoint()
-    #model_acc('/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
-    #plot_concept_ensemble_ts('/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
-    #plot_ensemble_time_series('/quobyte/maikesgrp/mlhc_cbm/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
+    #model_acc('/path/to/data/no_free/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v6')
+    #plot_concept_ensemble_ts('/path/to/data/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
+    #plot_ensemble_time_series('/path/to/data/detrended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v5')
     # breakpoint()
-    from torch.utils.data import DataLoader                                                                                                                  
+    # from torch.utils.data import DataLoader                                                                                                                  
 
-    model_dirs = ['/quobyte/maikesgrp/mlhc_cbm/runs_040726/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v2']
-    input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
-    full_loader = DataLoader(train_loader.dataset.dataset, batch_size=64, shuffle=False, num_workers=0)  
-    for model_dir in model_dirs:       
-        save_all_preds(model_dir=model_dir, input_norm=input_norm,                                   
-                        concept_norm=concept_norm, output_norm=output_norm,                           
-                        full_loader=full_loader)               
+    # model_dirs = ['/path/to/data/runs_040726/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v10']
+    # input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
+    # full_loader = DataLoader(train_loader.dataset.dataset, batch_size=64, shuffle=False, num_workers=0)  
+    # for model_dir in model_dirs:       
+    #     save_all_preds(model_dir=model_dir, input_norm=input_norm,                                   
+    #                     concept_norm=concept_norm, output_norm=output_norm,                           
+    #                     full_loader=full_loader)               
     # save_all_preds(model_dir=model_dir, input_norm=input_norm,
     #                    concept_norm=concept_norm, output_norm=output_norm,
     #                    full_loader=full_loader)
     
 
-    # model_dirs = ['/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore',
-    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v2',
-    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v3'
+    # model_dirs = ['/path/to/data/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore',
+    # '/path/to/data/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v2',
+    # '/path/to/data/trended/UNetCBM_lam0.5_ep101_lr0.001_bs64_L1Loss_ZScore_v3'
     # ]
     # for model_dir in model_dirs:
     #     pred_clim(model_dir=model_dir)
     #     pred_concept_clim(model_dir=model_dir)
     
-    # model_dirs = ['/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v1',
-    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v2',
-    # '/quobyte/maikesgrp/mlhc_cbm/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v3']
+    # model_dirs = ['/path/to/data/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v1',
+    # '/path/to/data/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v2',
+    # '/path/to/data/trended/UNetCBM_lam0.0_ep101_bs64_L1Loss_ZScore_v3']
     # for model_dir in model_dirs:
     #     pred_clim(model_dir=model_dir)
 
@@ -764,7 +919,7 @@ if __name__ == '__main__':
     #                    concept_norm=concept_norm, output_norm=output_norm,
     #                    full_loader=full_loader)
     
-    #MODEL_DIR = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.15_ep50_lr0.001_bs64_MSELoss_ZScore_v2'
+    #MODEL_DIR = '/path/to/data/runs/UNetCBM_lam0.15_ep50_lr0.001_bs64_MSELoss_ZScore_v2'
     #save_all_preds(model_dir=MODEL_DIR)
     #compute_mhw_events(results_path=MODEL_DIR)
     #compare_mlhc_sst()
@@ -772,13 +927,13 @@ if __name__ == '__main__':
     #concept_weights()
     #save_val_preds()
     # Run with config.ini set to norm_type = MinMax:
-    # MODEL_DIR = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_MinMax'
+    # MODEL_DIR = '/path/to/data/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_MinMax'
     # Run with config.ini set to norm_type = ZScore:
-    #MODEL_DIR = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_ZScore'
+    #MODEL_DIR = '/path/to/data/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_ZScore'
 
     #input_norm, concept_norm, output_norm, train_loader, val_loader, test_loader = get_dataset()
-
-    #visualize()
+    #for i in np.arange(2, 11, 1):
+    #    visualize(f'/path/to/data/detrended/UNetCBM_lam0.0_ep101_lr0.001_bs64_L1Loss_ZScore_v{i}')
     #plot_sample(model_dir=MODEL_DIR, input_norm=input_norm, concept_norm=concept_norm, val_loader=val_loader)
     #plot_sample_pred_only(model_dir=MODEL_DIR, input_norm=input_norm, val_loader=val_loader)
     #run_inference(model_dir=MODEL_DIR)

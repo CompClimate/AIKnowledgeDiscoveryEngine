@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 import sys
 
 def mld_interface(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
     #ds_zv = xr.open_dataset(f'{path}/vozocrtx/{member}/vozocrtx_ORAS5_1m_{year}{month}_grid_U_02.nc')
     ds_pt = ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
@@ -41,18 +41,18 @@ def mld_interface(year, month, member):
         name='mxl_interface'
     )
     
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}'
+    output_path = f'/path/to/data/concepts/mxl_interface/{member}'
     os.makedirs(output_path, exist_ok=True)
     mld_interface_da.to_netcdf(f'{output_path}/mxl_interface_{year}{month}.nc')
 
 def vertical_shear(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_mv = xr.open_dataset(f'{path}/vomecrty/{member}/vomecrty_ORAS5_1m_{year}{month}_grid_V_02.nc')
     ds_zv = xr.open_dataset(f'{path}/vozocrtx/{member}/vozocrtx_ORAS5_1m_{year}{month}_grid_U_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
     
     # Load pre-computed MLD interface
-    ds_interface = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
+    ds_interface = xr.open_dataset(f'/path/to/data/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
     above_idx = ds_interface['mxl_interface'].values[0, :, :]
     
     # get data
@@ -87,12 +87,12 @@ def vertical_shear(year, month, member):
         name='vograds2'
     )
     
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vograds2/{member}'
+    output_path = f'/path/to/data/concepts/vograds2/{member}'
     os.makedirs(output_path, exist_ok=True)
     shear_sq_da.to_netcdf(f'{output_path}/vograds2_{year}{month}_T.nc')
 
 def vertical_shear_updated(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_mv = xr.open_dataset(f'{path}/vomecrty/{member}/vomecrty_ORAS5_1m_{year}{month}_grid_V_02.nc')
     ds_zv = xr.open_dataset(f'{path}/vozocrtx/{member}/vozocrtx_ORAS5_1m_{year}{month}_grid_U_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
@@ -120,16 +120,16 @@ def vertical_shear_updated(year, month, member):
         name='vos2'
     )
     
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vos2/{member}'
+    output_path = f'/path/to/data/concepts/vos2/{member}'
     os.makedirs(output_path, exist_ok=True)
     s2_da.to_netcdf(f'{output_path}/vos2_{year}{month}_T.nc')
     
 
 def heat_flux(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
     
-    ds_interface = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
+    ds_interface = xr.open_dataset(f'/path/to/data/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
     above_idx = ds_interface['mxl_interface'].values[0, :, :]
 
     # get data
@@ -159,15 +159,15 @@ def heat_flux(year, month, member):
         name='votempdiff' 
     )
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/votempdiff/{member}'
+    output_path = f'/path/to/data/concepts/votempdiff/{member}'
     os.makedirs(output_path,  exist_ok=True)
     heat_flux_da.to_netcdf(f'{output_path}/votempdiff_{year}{month}_T.nc')
 
 def salinity_flux(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_pt = xr.open_dataset(f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc')
     
-    ds_interface = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
+    ds_interface = xr.open_dataset(f'/path/to/data/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
     above_idx = ds_interface['mxl_interface'].values[0, :, :]
 
     # get data
@@ -197,7 +197,7 @@ def salinity_flux(year, month, member):
         name='vosaldiff' 
     )
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vosaldiff/{member}'
+    output_path = f'/path/to/data/concepts/vosaldiff/{member}'
     os.makedirs(output_path,  exist_ok=True)
     heat_flux_da.to_netcdf(f'{output_path}/vosaldiff_{year}{month}_T.nc')
 
@@ -206,7 +206,7 @@ def rho(sal, temp, d, lat):
     return sw.eos80.dens(sal, temp, p)
 
 def brunt_vaisala_updated(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_sal = xr.open_dataset(f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
@@ -232,18 +232,18 @@ def brunt_vaisala_updated(year, month, member):
         name='von2' 
     )
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/von2/{member}'
+    output_path = f'/path/to/data/concepts/von2/{member}'
     os.makedirs(output_path,  exist_ok=True)
     bv_da.to_netcdf(f'{output_path}/von2_{year}{month}_T.nc')
 
     
 
 def brunt_vaisala(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_sal = xr.open_dataset(f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc')
     
-    ds_interface = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
+    ds_interface = xr.open_dataset(f'/path/to/data/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
     above_idx = ds_interface['mxl_interface'].values[0, :, :]
     below_idx = above_idx + 1
 
@@ -284,14 +284,14 @@ def brunt_vaisala(year, month, member):
         name='von2' 
     )
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/von2/{member}'
+    output_path = f'/path/to/data/concepts/von2/{member}'
     os.makedirs(output_path,  exist_ok=True)
     bv_da.to_netcdf(f'{output_path}/von2_{year}{month}_T.nc')
     
 def richardson_number(year, month, member):
     # 1. Load data without squeezing so we keep the time dimension (1, y, x)
-    n2_ds = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/von2/{member}/von2_{year}{month}_T.nc')
-    s2_ds = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/vos2/{member}/vos2_{year}{month}_T.nc')
+    n2_ds = xr.open_dataset(f'/path/to/data/concepts/von2/{member}/von2_{year}{month}_T.nc')
+    s2_ds = xr.open_dataset(f'/path/to/data/concepts/vos2/{member}/vos2_{year}{month}_T.nc')
     
     n2 = n2_ds['von2']
     s2 = s2_ds['vos2']
@@ -308,14 +308,14 @@ def richardson_number(year, month, member):
     # Optional: Handle division by zero/shear being very small
     # ri_da = ri_da.where(s2 > 1e-10, np.nan) 
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vori/{member}'
+    output_path = f'/path/to/data/concepts/vori/{member}'
     os.makedirs(output_path, exist_ok=True)
     
     # 4. Save the DataArray object, not the raw 'ri' result
     ri_da.to_netcdf(f'{output_path}/vori_{year}{month}_T.nc')
 
 def wind_stress_curl(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_v = xr.open_dataset(f'{path}/sometauy/{member}/sometauy_ORAS5_1m_{year}{month}_grid_V_02.nc')
     ds_u = xr.open_dataset(f'{path}/sozotaux/{member}/sozotaux_ORAS5_1m_{year}{month}_grid_U_02.nc')
     mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
@@ -368,22 +368,22 @@ def wind_stress_curl(year, month, member):
         name='sowsc' 
     )
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/sowsc/{member}'
+    output_path = f'/path/to/data/concepts/sowsc/{member}'
     os.makedirs(output_path,  exist_ok=True)
     wsc_da.to_netcdf(f'{output_path}/sowsc_{year}{month}_F.nc')
 
 def ekman_pumping(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
 
     ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_sal = xr.open_dataset(f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_wsc = xr.open_dataset(
-        f'/quobyte/maikesgrp/sanah/concepts/sowsc/{member}/sowsc_{year}{month}_F.nc'
+        f'/path/to/data/concepts/sowsc/{member}/sowsc_{year}{month}_F.nc'
     )
     mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
 
     # mixed-layer interface indices
-    ds_interface = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
+    ds_interface = xr.open_dataset(f'/path/to/data/concepts/mxl_interface/{member}/mxl_interface_{year}{month}.nc')
     above_idx = ds_interface['mxl_interface'].values[0, :, :]
     below_idx = above_idx + 1
 
@@ -421,7 +421,7 @@ def ekman_pumping(year, month, member):
         name='voep'
     )
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/voep/{member}'
+    output_path = f'/path/to/data/concepts/voep/{member}'
     os.makedirs(output_path, exist_ok=True)
     ep_da.to_netcdf(f'{output_path}/voep_{year}{month}_F.nc')
 
@@ -446,13 +446,13 @@ def rossby():
         name='rossby_parameter'
     )
 
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/{member}/sorp'
+    output_path = f'/path/to/data/concepts/{member}/sorp'
     os.makedirs(output_path,  exist_ok=True)
     beta_da.to_netcdf(f'{output_path}/sorp.nc')
 
 # def mxl_tendency(year, month, member):
-#     base_path = f'/quobyte/maikesgrp/kkringel/oras5/ORCA025/somxl010/{member}'
-#     output_dir = f'/quobyte/maikesgrp/sanah/concepts/{member}/mxl_tendency'
+#     base_path = f'/path/to/data/oras5/ORCA025/somxl010/{member}'
+#     output_dir = f'/path/to/data/concepts/{member}/mxl_tendency'
 #     os.makedirs(output_dir, exist_ok=True)
     
 #     month_str = f"{month:02d}"
@@ -515,8 +515,8 @@ def rossby():
 
 def mxl_tendency(year, month, member):
 
-    base_path = f'/quobyte/maikesgrp/kkringel/oras5/ORCA025/somxl010/{member}'
-    output_dir = f'/quobyte/maikesgrp/sanah/concepts/mxl_tendency/{member}/'
+    base_path = f'/path/to/data/oras5/ORCA025/somxl010/{member}'
+    output_dir = f'/path/to/data/concepts/mxl_tendency/{member}/'
     os.makedirs(output_dir, exist_ok=True)
     
     curr_file = f"{base_path}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc"
@@ -593,7 +593,7 @@ def mxl_tendency(year, month, member):
 def mlhc(year, month, member):
     rho=1026.0 
     cp=3990.0
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
     mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
@@ -640,12 +640,12 @@ def mlhc(year, month, member):
         dims=['time_counter', 'y', 'x'],
         name='vomlhc'
     )
-    output_path = f'/quobyte/maikesgrp/sanah/target/vomlhc/{member}'
+    output_path = f'/path/to/data/target/vomlhc/{member}'
     os.makedirs(output_path, exist_ok=True)
     mlhc_da.to_netcdf(f'{output_path}/vomlhc_{year}{month}_T.nc')
 
 def vozocrtx_ml(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_u = xr.open_dataset(f'{path}/vozocrtx/{member}/vozocrtx_ORAS5_1m_{year}{month}_grid_U_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
     mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
@@ -691,12 +691,12 @@ def vozocrtx_ml(year, month, member):
         dims=['time_counter', 'y', 'x'],
         name='vozocrtx_ml'
     )
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vozocrtx_ml/{member}'
+    output_path = f'/path/to/data/concepts/vozocrtx_ml/{member}'
     os.makedirs(output_path, exist_ok=True)
     zv_da.to_netcdf(f'{output_path}/vozocrtx_ml_{year}{month}_U.nc')
 
 def vomecrty_ml(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_v = xr.open_dataset(f'{path}/vomecrty/{member}/vomecrty_ORAS5_1m_{year}{month}_grid_V_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
     mesh = xr.open_dataset(f'{path}/mesh/mesh_mask.nc')
@@ -742,7 +742,7 @@ def vomecrty_ml(year, month, member):
         dims=['time_counter', 'y', 'x'],
         name='vomecrty_ml'
     )
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vomecrty_ml/{member}'
+    output_path = f'/path/to/data/concepts/vomecrty_ml/{member}'
     os.makedirs(output_path, exist_ok=True)
     mv_da.to_netcdf(f'{output_path}/vomecrty_ml_{year}{month}_V.nc')
 
@@ -784,8 +784,8 @@ def plot_concept(year, month, concept_path, concept_name, plot_title, concept_la
     plt.savefig(f'{concept_name}_{year}{month}')
 
 def plot_mxl(n, log=False):
-    ds = xr.open_dataset('/quobyte/maikesgrp/kkringel/oras5/ORCA025/somxl010/opa0/somxl010_ORAS5_1m_197901_grid_T_02.nc')
-    mesh = xr.open_dataset('/quobyte/maikesgrp/kkringel/oras5/ORCA025/mesh/mesh_mask.nc')
+    ds = xr.open_dataset('/path/to/data/oras5/ORCA025/somxl010/opa0/somxl010_ORAS5_1m_197901_grid_T_02.nc')
+    mesh = xr.open_dataset('/path/to/data/oras5/ORCA025/mesh/mesh_mask.nc')
     
     concept = ds['somxl010'].squeeze()
     lats = ds['nav_lat']
@@ -847,8 +847,8 @@ def plot_mxl(n, log=False):
 
 def entrainment(year, month, member):
     # 1. Open datasets
-    ds_tend = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/mxl_tendency/{member}/mxl_tendency_{year}{month}_T.nc')
-    ds_diff = xr.open_dataset(f'/quobyte/maikesgrp/sanah/concepts/votempdiff/{member}/votempdiff_{year}{month}_T.nc')
+    ds_tend = xr.open_dataset(f'/path/to/data/concepts/mxl_tendency/{member}/mxl_tendency_{year}{month}_T.nc')
+    ds_diff = xr.open_dataset(f'/path/to/data/concepts/votempdiff/{member}/votempdiff_{year}{month}_T.nc')
     
     rho = 1026.0
     cp = 3990.0
@@ -875,14 +875,14 @@ def entrainment(year, month, member):
     )
     
     # 4. Save
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vohfe/{member}'
+    output_path = f'/path/to/data/concepts/vohfe/{member}'
     os.makedirs(output_path, exist_ok=True)
     
     # Corrected variable name from mlhc_da to he_da
     he_da.to_netcdf(f'{output_path}/vohfe_{year}{month}_T.nc')
 
 def vorticity(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_v = xr.open_dataset(f'{path}/vomecrty/{member}/vomecrty_ORAS5_1m_{year}{month}_grid_V_02.nc')
     ds_u = xr.open_dataset(f'{path}/vozocrtx/{member}/vozocrtx_ORAS5_1m_{year}{month}_grid_U_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
@@ -931,14 +931,14 @@ def vorticity(year, month, member):
         dims=['time_counter', 'y', 'x'],
         name='vovort'
     )
-    output_path = f'/quobyte/maikesgrp/sanah/concepts/vovort/{member}'
+    output_path = f'/path/to/data/concepts/vovort/{member}'
     os.makedirs(output_path, exist_ok=True)
     zeta_da.to_netcdf(f'{output_path}/vovort_{year}{month}_F.nc')
 
 def detrend(concept, mem):
 
     fig, ax = plt.subplots()
-    concept_zarr = xr.open_zarr(f'/quobyte/maikesgrp/sanah/na_crop_latest/{mem}/{concept}_na.zarr')
+    concept_zarr = xr.open_zarr(f'/path/to/data/pacific_crop/{mem}/{concept}_p.zarr')
     concept_np = concept_zarr[concept].values 
     ax.plot(np.nanmean(concept_np, axis=(1, 2)), label='unprocessed')
     nan_mask = np.isnan(concept_np)
@@ -950,11 +950,11 @@ def detrend(concept, mem):
         {concept: (concept_zarr[concept].dims, concept_detrend)},
         coords = concept_zarr[concept].coords
     )
-    save_path = f'/quobyte/maikesgrp/sanah/na_crop_detrended/{mem}/{concept}_na.zarr'
+    save_path = f'/path/to/data/pacific_crop_detrended/{mem}/{concept}_p.zarr'
     os.makedirs(save_path, exist_ok=True)
     ds_detrend.to_zarr(save_path, mode='w')
     fig.legend()
-    fig.savefig(f'/quobyte/maikesgrp/sanah/na_crop_detrended/{mem}/{concept}_viz.png')
+    fig.savefig(f'/path/to/data/pacific_crop_detrended/{mem}/{concept}_viz.png')
     print(f'saved {mem} {concept}', flush=True)
 
 def run_task(args):
@@ -966,10 +966,10 @@ def run_task(args):
 
 if __name__ == "__main__":
     #detrend('vozocrtx_ml')
-    concepts_3 = ['sossheig', 'sowsc', 'vozocrtx_ml', 'vomecrty_ml', 'voep', 'vovort', 'mxl_tendency']
-    concepts_2 = ['sosaline', 'sosstsst', 'somxl010', 'sohefldo', 'vori', 'von2', 'vos2', 'vohfe']
-    concept = sys.argv[1]                                                                                                                                                    
-    mem = sys.argv[2]                                                                                                                                                        
+    #concepts_3 = ['sossheig', 'sowsc', 'vozocrtx_ml', 'vomecrty_ml', 'voep', 'vovort', 'mxl_tendency']
+    #concepts_2 = ['sosaline', 'sosstsst', 'somxl010', 'sohefldo', 'vori', 'von2', 'vos2', 'vohfe']
+    mem = sys.argv[1]                                                                                                                                                    
+    concept = sys.argv[2]                                                                                                                                                        
     detrend(concept, mem)
     # # ---- Parse command-line arguments ----
     # parser = argparse.ArgumentParser(description="Run MLD interface calculations in parallel.")

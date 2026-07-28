@@ -82,7 +82,8 @@ def get_dataset():
         l_vars.append(label_slice)
     l_vals = np.stack(l_vars)
 
-    norm_cache = '/quobyte/maikesgrp/sanah/norm_stats.npz'
+    norm_cache = config.get('OUTPUT', 'norm_cache',
+                            fallback='/path/to/scratch/temp_project/norm_stats.npz')
     features_key = '_'.join(sorted(features)) + f'_w{config.getint("DATASET", "context_window")}'
     concepts_key = '_'.join(sorted(concepts)) + f'_w{config.getint("DATASET", "context_window")}'
     if os.path.exists(norm_cache):
@@ -98,8 +99,11 @@ def get_dataset():
         else:
             print('norm cache mismatch, refitting norms', flush=True)
             input_norm.fit(X_vals[:, :, :train_time_end])
+            del X_vals
             concept_norm.fit(c_vals[:, :, :train_time_end])
+            del c_vals
             output_norm.fit(l_vals[:, :, :train_time_end])
+            del l_vals
             np.savez(norm_cache,
                      input_mean=input_norm.mean.numpy(), input_std=input_norm.std.numpy(),
                      concept_mean=concept_norm.mean.numpy(), concept_std=concept_norm.std.numpy(),
@@ -109,10 +113,13 @@ def get_dataset():
         print('no norm cache, fitting and saving', flush=True)
         input_norm.fit(X_vals[:, :, :train_time_end])
         print('fit input')
+        del X_vals
         concept_norm.fit(c_vals[:, :, :train_time_end])
         print('fit concept')
+        del c_vals
         output_norm.fit(l_vals[:, :, :train_time_end])
         print('fit label')
+        del l_vals
         np.savez(norm_cache,
                  input_mean=input_norm.mean.numpy(), input_std=input_norm.std.numpy(),
                  concept_mean=concept_norm.mean.numpy(), concept_std=concept_norm.std.numpy(),

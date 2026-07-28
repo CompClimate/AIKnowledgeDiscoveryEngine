@@ -13,9 +13,13 @@ import os
 import shutil
 
 loc = config['DATASET']['location']
-mesh = xr.open_zarr(f'{loc}/tmask_crop.zarr')
+mesh = xr.open_zarr(f'{loc}/{config.get("DATASET", "tmask_name", fallback="tmask_g")}.zarr')
 mesh = mesh['tmaskutil'].isel(t=0)  # [y, x]
-mask = mesh.sel(y=slice(0, 302), x=slice(0,400)).values
+mask = mesh.values
+sy = config.getint('DATASET', 'spatial_y', fallback=0)
+sx = config.getint('DATASET', 'spatial_x', fallback=0)
+if sy > 0 and sx > 0:
+    mask = mask[:sy, :sx]
 mask = torch.tensor(mask, dtype=torch.float32)[None, None, None, :, :]
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -80,11 +84,19 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
     else:
         output = output_dir
 
-    #allow for restart?
-    start_epoch = 0
-
     concept_names = try_cast(config['DATASET']['concepts'])
     n_concepts = len(concept_names)
+
+    # resume from latest checkpoint if one exists in output dir
+    start_epoch = 0
+    checkpoints = [f for f in os.listdir(output) if f'{model_type}_epoch' in f and f.endswith('.pt')]
+    if checkpoints:
+        latest = max(checkpoints, key=lambda f: int(f.split('epoch')[1].replace('.pt', '')))
+        start_epoch = int(latest.split('epoch')[1].replace('.pt', '')) + 1
+        ckpt = torch.load(f'{output}/{latest}', map_location=DEVICE, weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'])
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        print(f'Resumed from {latest}, starting epoch {start_epoch}', flush=True)
 
     losses = []
     val_losses = []
@@ -94,9 +106,23 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
     val_concept_losses = []
     per_concept_losses = {name: [] for name in concept_names}
     val_per_concept_losses = {name: [] for name in concept_names}
+
+    detailed_path = f'{output}/detailed_losses.pt'
+    if start_epoch > 0 and os.path.exists(detailed_path):
+        _d = torch.load(detailed_path, weights_only=False)
+        losses             = _d['loss']
+        val_losses         = _d['val_loss']
+        pred_losses        = _d['train_pred']
+        val_pred_losses    = _d['val_pred']
+        concept_losses     = _d['concept_loss']
+        val_concept_losses = _d['val_concept_loss']
+        per_concept_losses = _d['train_per_concept']
+        val_per_concept_losses = _d['val_per_concept']
+        print(f'Loaded loss history ({len(losses)} epochs)', flush=True)
     for epoch in range(start_epoch, n_epochs):
         epoch_start = time.time()
-        #concept_lambda = lambda_max * (lambda_min / lambda_max) ** (epoch / max(n_epochs - 1, 1))  # adaptive
+        if concept_lambda != 0.0: 
+            concept_lambda = lambda_max * (lambda_min / lambda_max) ** (epoch / max(n_epochs - 1, 1))  # adaptive
         print(DEVICE)
         model.train(True)
         train_loss_accum = 0
@@ -168,12 +194,7 @@ def train(input_norm, concept_norm, output_norm, train_loader, val_loader, outpu
                     cl = concept_loss_fn(concept_pred[:, ci][vcm], val_concept_y[:, ci][vcm]) if vcm.any() else concept_pred.new_tensor(0.0)
                     val_per_cl.append(cl)
                 val_concept_loss = torch.stack(val_per_cl).mean().item()
-                if free is not None:
-                    val_residual = (val_y - pred) * mask
-                    val_free_loss = out_loss_fn(free * mask, val_residual).item()
-                else:
-                    val_free_loss = 0.0
-                val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss + val_free_loss
+                val_loss += (1-concept_lambda) * val_pred_loss + concept_lambda * val_concept_loss
                 val_pred_accum += val_pred_loss
                 val_concept_accum += val_concept_loss
                 for idx, ci in enumerate(ci_range):
