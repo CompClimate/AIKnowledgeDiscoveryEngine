@@ -1,12 +1,3 @@
-# AIKnowledgeDiscoveryEngine
+This is the code accompanying the paper titled "OceanCBM: A Concept Bottleneck Model for Mechanistic Interpretability in Ocean Forecasting".
 
-As the climate warms, finding pathways to resilience becomes increasingly pressing. Extreme
-events, especially those where the atmosphere and ocean interact, such as marine heatwaves, atmospheric rivers
-and hurricanes, are increasingly impacting society. Critically, our ability to understand
-underlying mechanisms of current extremes and even geoengineering we may induce in the future
-lags critically behind our capacity adapt to them. This is because despite decades of
-observations and sophisticated Earth system models (ESM), the sheer complexity of these
-systems has prevented us from distilling the fundamental physical relationships that govern
-these events. Our work addresses a transformative question: Can interpretable machine
-learning reveal the causal mechanisms underlying Earth system extremes, while simultaneously validating its
-own discoveries in collaboration with scientists?
+Abstract: Extreme ocean phenomena are challenging not only to predict but to diagnose, as accurate forecasts alone do not reveal the underlying physical drivers. While recent machine learning approaches achieve strong predictive skill, they remain largely opaque and provide limited guarantees of fidelity to ground-truth physics. We introduce OceanCBM, the first concept bottleneck model (CBM) for spatiotemporal prediction and mechanistic interrogation of ocean dynamics. OceanCBM uses mixed supervision to predict mixed layer heat content, a key precursor of marine heatwaves, while routing information through an intermediate layer of prescribed concepts derived from geophysical fluid dynamics and a 'free' concept. This design imposes soft physical structure without over-constraining the model, and the free concept both regularizes concept predictions and captures residual physical processes. Across ensemble initializations, we show that mixed supervision yields consistent mechanistic representations, whereas prediction-only and prescription-only baselines learn highly variable latent structures despite similar predictive performance. OceanCBM achieves interpretable, physically grounded representations without sacrificing skill, explicitly characterizing the interpretability-performance trade-off.
