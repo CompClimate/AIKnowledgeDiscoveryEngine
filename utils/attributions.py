@@ -190,5 +190,5 @@ def gradient_shap_inputs(model_dir=None, input_norm=None, concept_norm=None,
 
 
 if __name__ == "__main__":
-    MODEL_DIR   = '/quobyte/maikesgrp/mlhc_cbm/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_MinMax'
+    MODEL_DIR   = '/path/to/data/runs/UNetCBM_lam0.5_ep50_lr0.001_bs64_BCELoss_MinMax'
     gradient_shap_inputs(model_dir=MODEL_DIR)

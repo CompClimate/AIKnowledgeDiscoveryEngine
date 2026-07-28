@@ -15,7 +15,7 @@ def cons_temp(sal, temp, d, lat, lon):
     return gsw.CT_from_pt(SA, temp)
 
 def mlhc(year, month, member):
-    path = '/quobyte/maikesgrp/kkringel/oras5/ORCA025'
+    path = '/path/to/data/oras5/ORCA025'
     ds_pt = xr.open_dataset(f'{path}/votemper/{member}/votemper_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_sal = xr.open_dataset(f'{path}/vosaline/{member}/vosaline_ORAS5_1m_{year}{month}_grid_T_02.nc')
     ds_mxl = xr.open_dataset(f'{path}/somxl010/{member}/somxl010_ORAS5_1m_{year}{month}_grid_T_02.nc')
@@ -80,11 +80,11 @@ def mlhc(year, month, member):
         name='mixed_layer_heat_content'
     )
     
-    output_path = f'/quobyte/maikesgrp/sanah/target/{member}/vomlhc'
+    output_path = f'/path/to/data/target/{member}/vomlhc'
     os.makedirs(output_path, exist_ok=True)
     mlhc_da.to_netcdf(f'{output_path}/vomlhc_{year}{month}.nc')
 
 if __name__ == "__main__":
     mlhc('1979', '06', 'opa0')
-    plot_concept('1979', '06', '/quobyte/maikesgrp/sanah/target/opa0/vomlhc/vomlhc_197906.nc',
+    plot_concept('1979', '06', '/path/to/data/target/opa0/vomlhc/vomlhc_197906.nc',
     'mixed_layer_heat_content', 'MLHC', '$J/m^{-2}$')

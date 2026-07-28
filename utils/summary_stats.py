@@ -79,7 +79,7 @@ print("-" * 40)
 
 for epoch in epochs_to_check:
     model = get_config.get_model()
-    path = f'/home/kkringel/temp/20260202_testingMLP/bs_1/PointwiseCBM_epoch{epoch}.pt'
+    path = f'/path/to/home/temp/20260202_testingMLP/bs_1/PointwiseCBM_epoch{epoch}.pt'
     checkpoint = torch.load(path, map_location='cpu', weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     
@@ -99,7 +99,7 @@ axes[0].set_title("GROUND TRUTH\nLead 0")
 
 for i, epoch in enumerate(epochs_to_check):
     model = get_config.get_model()
-    path = f'/home/kkringel/temp/20260202_testingMLP/bs_1/PointwiseCBM_epoch{epoch}.pt'
+    path = f'/path/to/home/temp/20260202_testingMLP/bs_1/PointwiseCBM_epoch{epoch}.pt'
     checkpoint = torch.load(path, map_location='cpu', weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
